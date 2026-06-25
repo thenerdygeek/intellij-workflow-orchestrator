@@ -289,3 +289,18 @@ Consumed via `ApprovalPolicy.forTool(tool)` in `AgentLoop`. No behavior change f
 **Rollout precondition (accepted).** The migration treats `settingsSchemaVersion == 0` as a fresh install. This is correct because all internal builds ship from `feature/plugin-split`, which already contains the 0a sentinel-stamp — every real install is at `>= 1` before receiving 1a. A pre-0a→1a direct jump (the only mis-classified case) does not occur in the internal-first rollout, and there are no pre-existing open-source installs.
 
 **Process:** plan 3-round opus-reviewed (platform/bytecode + completeness + skeptic); the bytecode review decompiled IntelliJ 2025.1.7 to confirm omit-default/serialize-on-seed AND verified `ProjectActivity` runs after `loadState`. Executed subagent-driven (per-task two-stage review); the Task-2 review caught a missed `else`-branch prefetch literal (green tests didn't — no test covers that path), fixed before merge.
+
+
+---
+
+## 20. Phase 1b resolved (2026-06-25)
+
+**System-prompt integration-gating.** The agent prompt mentions Jira/Bamboo/SonarQube/Bitbucket only when configured. A small `IntegrationFlags(jira, bamboo, sonar, bitbucket)` value type (`:agent` `prompt/IntegrationFlags.kt`) is threaded into `SystemPrompt.build(..., integrations = IntegrationFlags.NONE)` and gates SIX fragments: the agentRole "enterprise integrations (…)" clause (list built from configured set), the `jira:` link scheme + Jira example in `outputFormatting`, the Project-integrations tool list, the `project_context` comprehensive-state clauses (per-integration), the Sonar `local_analysis` tip, and the Jira-Transition `rules` section.
+
+**Two signals, by design:** the ORCHESTRATOR resolves flags from `ConnectionSettings` (`*Url.isNotBlank()` — same predicate as `reregisterConditionalTools` tool-gating); the SUB-AGENT resolves from its OWN persona registry (`registry.has(...)`, mirroring `hasWebTools`) so a tool-restricted persona never gets prose for a tool it can't call (a strict refinement — integration tools are only in any registry when their URL is configured). Flags are PASSED IN (never read inside `build()`) so the golden-snapshot tests stay pure JUnit 5.
+
+**Parity proven by zero-diff regen:** the 7 orchestrator + 7 sub-agent golden snapshots regenerate with `IntegrationFlags.ALL` and show ZERO diff — all-ON is byte-identical to the pre-1b prompt. Three new gated orchestrator snapshots pin the gating: `no-integrations`, `jira-only`, and `no-jira` (the last pins jira-OFF against a non-empty stack — the separator-flow boundary). A source-text contract test (`SystemPromptCallerIntegrationFlagsContractTest`) guards that every `SystemPrompt.build(` production caller passes `integrations =` (the `NONE` default would otherwise silently ship a stack-less prompt to a configured user).
+
+**Deferred:** persona role-text + the `supportsSpring` gate on security-auditor/performance-engineer are Phase 3, NOT 1b. Tool *registration* was already gated; 1b only aligns the prose.
+
+**Process:** plan 3-round opus-reviewed (accuracy/byte-parity [decompile-level] + completeness + skeptic) — the skeptic caught the sub-agent-signal blocker (registry, not ConnectionSettings) and the completeness review caught the snapshot-count asserts + the stale "5 sub-agent snapshots" (actually 7). Executed subagent-driven; per-task review + final whole-branch review. ⚠ **Pre-existing 0b-3 detekt drift in `:agent` remains (cache-masked, user-deferred to an IDE autocorrect pass); 1b code itself is detekt-clean (import-ordering nits fixed).**
