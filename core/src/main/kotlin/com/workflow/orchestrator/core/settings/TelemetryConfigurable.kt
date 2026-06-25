@@ -37,6 +37,16 @@ class TelemetryConfigurable(private val project: Project) : SearchableConfigurab
                             { settings.state.diagnosticJsonlEnabled = it }
                         )
                 }
+                row {
+                    // Written to ~/.workflow-orchestrator/diagnostics/plugin-{0,1,2}.log
+                    // by PluginDiagnosticLogService — installed at startup by PluginDiagnosticLogActivity.
+                    // Install is one-shot per IDE session, so the toggle only takes effect after restart.
+                    checkBox("Write a separate shareable plugin diagnostic log (for support; applies after restart)")
+                        .bindSelected(
+                            { settings.state.pluginDiagnosticLogEnabled },
+                            { settings.state.pluginDiagnosticLogEnabled = it }
+                        )
+                }
                 row("Log retention (days):") {
                     intTextField(range = 1..365)
                         .bindIntText(settings.state::retentionDays)

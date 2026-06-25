@@ -150,6 +150,13 @@ class PluginSettings : SimplePersistentStateComponent<PluginSettings.State>(Stat
         // ── Telemetry & Logs settings ─────────────────────────────────────────────
         var logLevel by string("INFO")
         var diagnosticJsonlEnabled by property(true)
+        /**
+         * When true, a small rotating file containing ONLY this plugin's own log records is
+         * written to `~/.workflow-orchestrator/diagnostics/plugin-{0,1,2}.log` (see
+         * [com.workflow.orchestrator.core.diagnostics.PluginDiagnosticLogService]). Lets testers
+         * share a focused log instead of the cumulative, platform-noisy `idea.log`. Default on.
+         */
+        var pluginDiagnosticLogEnabled by property(true)
         var retentionDays by property(7)
         var includeCommandOutputInLogs by property(false)
         var costDisplayEnabled by property(true)

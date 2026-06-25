@@ -281,6 +281,10 @@
         <postStartupActivity
             implementation="com.workflow.orchestrator.core.settings.SettingsMigrationStartupActivity"/>
 
+        <!-- Shareable plugin diagnostic log: small rotating file with ONLY this plugin's records -->
+        <postStartupActivity
+            implementation="com.workflow.orchestrator.core.diagnostics.PluginDiagnosticLogActivity"/>
+
         <!-- Auto-detect startup activity (runs after DumbService smart mode) -->
         <postStartupActivity
             implementation="com.workflow.orchestrator.core.autodetect.WorkflowAutoDetectStartupActivity"/>
