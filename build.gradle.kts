@@ -21,6 +21,10 @@ kotlin {
 // ---- Repositories ----
 repositories {
     mavenCentral()
+    // Remote Robot (`com.intellij.remoterobot:remote-robot` / `remote-fixtures`) is NOT published
+    // to Maven Central — it lives only in the JetBrains intellij-dependencies space. Needed by the
+    // `uiTest` source set below; harmless for every other configuration.
+    maven("https://packages.jetbrains.team/maven/p/ij/intellij-dependencies")
     intellijPlatform {
         defaultRepositories()
     }
@@ -155,6 +159,21 @@ allprojects {
     }
 }
 
+// ---- UI Test Source Set (Remote Robot) ----
+// A dedicated `uiTest` source set hosts the out-of-process Remote Robot UI tests so they never
+// run under the normal `test` task (they need a live IDE + display + Ultimate license, see the
+// test file header). It compiles against the plugin's own `main` output and runs against it.
+// Wiring (task registration + dependencies) lives in the `// ---- UI Tests` section below.
+val uiTest by sourceSets.creating {
+    compileClasspath += sourceSets.main.get().output
+    runtimeClasspath += sourceSets.main.get().output
+}
+
+// `uiTestImplementation` inherits everything on the plugin's `implementation` classpath so the
+// tests see the same libraries the plugin ships with; `uiTestRuntimeOnly` carries the JUnit engine.
+configurations["uiTestImplementation"].extendsFrom(configurations.implementation.get())
+val uiTestRuntimeOnly: Configuration by configurations.getting
+
 // ---- Dependencies ----
 dependencies {
     // -- IntelliJ Platform --
@@ -212,7 +231,22 @@ dependencies {
     // driver via IntelliJ DataSources or Generic JDBC mode — see DatabaseConnectionManager
     // (`loadSqliteDriverOrThrow`) for the resolution chain and the user-facing error message.
 
-    // -- Test --
+    // -- UI Test (Remote Robot) --
+    // Out-of-process UI test harness: the JUnit5 test drives the running IDE over HTTP via
+    // Remote Robot. String config names are required because `uiTest*` configs are created
+    // dynamically from the `uiTest` source set above.
+    "uiTestImplementation"(libs.remote.robot)
+    "uiTestImplementation"(libs.remote.fixtures)
+    // kotlin.stdlib.default.dependency=false (gradle.properties) means stdlib is NOT auto-added, and
+    // the uiTest source set has neither the IntelliJ platform nor stdlib on its classpath — so add it
+    // explicitly (else even kotlin.Any/Unit/listOf don't resolve). okhttp must be on the COMPILE
+    // classpath because RemoteRobot's constructor signature references okhttp3.OkHttpClient, which
+    // remote-robot only exposes as a runtime (implementation) transitive.
+    "uiTestImplementation"(kotlin("stdlib"))
+    "uiTestImplementation"(libs.okhttp)
+    "uiTestImplementation"(libs.junit5.api)
+    "uiTestRuntimeOnly"(libs.junit5.engine)
+    "uiTestRuntimeOnly"(libs.junit5.platform.launcher)
 }
 
 // ---- IntelliJ Platform Configuration ----
@@ -284,6 +318,39 @@ intellijPlatform {
             org.jetbrains.intellij.platform.gradle.tasks.VerifyPluginTask.FailureLevel.OVERRIDE_ONLY_API_USAGES,
         )
     }
+}
+
+// ---- UI Tests (Remote Robot) ----
+// Two-task flow (IntelliJ Platform Gradle Plugin 2.x — `runIdeForUiTests` is NOT a built-in here):
+//   1. `./gradlew runIdeForUiTests`  — launches the sandbox IDE with the Robot Server plugin
+//      listening on :8082 (registered below via the v2 `intellijPlatformTesting.runIde` DSL).
+//   2. `./gradlew uiTest`            — runs the JUnit5 tests that drive that IDE over HTTP.
+// Both REQUIRE a licensed IDEA Ultimate + a display (see the test file header). They are never
+// wired into `check`/`build` and must be invoked explicitly.
+val runIdeForUiTests by intellijPlatformTesting.runIde.registering {
+    task {
+        jvmArgumentProviders += CommandLineArgumentProvider {
+            listOf(
+                "-Drobot-server.port=8082",
+                "-Djb.privacy.policy.text=<!--999.999-->",
+                "-Djb.consents.confirmation.enabled=false",
+                "-Didea.trust.all.projects=true",
+                "-Dide.mac.message.dialogs.as.sheets=false",
+                "-Didea.initially.ask.config=never",
+            )
+        }
+    }
+    plugins {
+        robotServerPlugin()
+    }
+}
+
+tasks.register<Test>("uiTest") {
+    group = "verification"
+    description = "Remote Robot UI tests (start runIdeForUiTests first)"
+    testClassesDirs = sourceSets["uiTest"].output.classesDirs
+    classpath = sourceSets["uiTest"].runtimeClasspath
+    useJUnitPlatform()
 }
 
 // ---- Changelog ----

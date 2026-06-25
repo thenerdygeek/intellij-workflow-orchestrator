@@ -34,6 +34,9 @@ mockk = "1.13.10"
 opentest4j = "1.3.0"
 turbine = "1.1.0"
 
+# ---- UI Testing (Remote Robot) ----
+remoteRobot = "0.11.23"
+
 # ---- Gradle Plugins ----
 changelog = "2.5.0"
 kover = "0.9.5"
@@ -77,6 +80,11 @@ junit5-platform-launcher = { group = "org.junit.platform", name = "junit-platfor
 mockk = { group = "io.mockk", name = "mockk", version.ref = "mockk" }
 opentest4j = { group = "org.opentest4j", name = "opentest4j", version.ref = "opentest4j" }
 turbine = { group = "app.cash.turbine", name = "turbine", version.ref = "turbine" }
+
+# UI Testing (Remote Robot) — driven from the root project's `uiTest` source set.
+# Not on Maven Central; resolved from the JetBrains intellij-dependencies repo (see root build.gradle.kts).
+remote-robot = { group = "com.intellij.remoterobot", name = "remote-robot", version.ref = "remoteRobot" }
+remote-fixtures = { group = "com.intellij.remoterobot", name = "remote-fixtures", version.ref = "remoteRobot" }
 
 # JSON-RPC / Cody Agent
 lsp4j-jsonrpc = { group = "org.eclipse.lsp4j", name = "org.eclipse.lsp4j.jsonrpc", version.ref = "lsp4j" }
