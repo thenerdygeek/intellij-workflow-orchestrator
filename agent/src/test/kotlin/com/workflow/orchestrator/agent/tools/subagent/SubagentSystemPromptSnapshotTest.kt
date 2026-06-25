@@ -134,8 +134,9 @@ class SubagentSystemPromptSnapshotTest {
             // which differs macOS vs Linux CI and broke the golden comparison).
             homeDir = "/home/snapshot",
             completingYourTaskSection = COMPLETING_SECTION,
-            // Subagent snapshots use ALL to preserve pre-1b content for regression
-            // (sub-agent integration gating via persona registry is Phase 1c work).
+            // Subagent snapshots pass ALL so they stay byte-identical to pre-1b content (parity).
+            // Production sub-agents resolve flags from their OWN persona registry in
+            // SubagentRunner (registry.has), wired in Phase 1b — not from ConnectionSettings.
             integrations = IntegrationFlags.ALL,
         )
 
