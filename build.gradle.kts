@@ -322,6 +322,17 @@ tasks {
         // Keep this aligned with gradle/wrapper/gradle-wrapper.properties.
         gradleVersion = "9.4.0"
     }
+
+    // Gradle 9.4 changed the Zip task's default duplicatesStrategy from INCLUDE to FAIL.
+    // buildPlugin assembles the plugin's `lib/` from two contributions that both carry the
+    // `<plugin>-<ver>-searchableOptions.jar` (the jarSearchableOptions output AND the composed
+    // plugin layout). Those entries are byte-identical (only one searchableOptions JAR is ever
+    // produced), so de-duplicating (EXCLUDE) yields the correct single-entry ZIP. Pre-9.4 the
+    // dup was silently INCLUDE'd; post-bump it hard-fails buildPlugin / verifyPlugin /
+    // :plugin-b:runIde. Scoped to buildPlugin only (not all Zip tasks) to stay surgical.
+    named<org.gradle.api.tasks.bundling.Zip>("buildPlugin") {
+        duplicatesStrategy = org.gradle.api.file.DuplicatesStrategy.EXCLUDE
+    }
 }
 
 // TODO(zip-size-budget): a build-time assertion that the produced ZIP stays under a fixed
