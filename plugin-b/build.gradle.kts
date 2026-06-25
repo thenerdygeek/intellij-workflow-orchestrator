@@ -38,11 +38,24 @@ dependencies {
     compileOnly(project(":agent"))
     compileOnly(libs.kotlinx.coroutines.core)
     compileOnly(libs.kotlinx.serialization.json)
+    // B's behavioral tests exercise the REAL split impls (CompanyBWorkflowConfig +
+    // CompanyBToolContributor) against :core's WorkflowConfig and :agent's ToolRegistry /
+    // ToolRegistrationContext / ToolContributionRunner, so both modules must be on the TEST
+    // classpath (compileOnly above only covers main). serialization.json is needed because
+    // AgentTool.execute returns a kotlinx.serialization JsonObject.
+    testImplementation(project(":core"))
+    testImplementation(project(":agent"))
+    testImplementation(libs.kotlinx.serialization.json)
+    testImplementation(libs.mockk)
     testImplementation(libs.junit5.api)
     testRuntimeOnly(libs.junit5.engine)
     testRuntimeOnly(libs.junit5.vintage.engine)
     testRuntimeOnly(libs.junit5.platform.launcher)
     testImplementation(kotlin("test"))
+}
+
+tasks.test {
+    useJUnitPlatform()
 }
 
 intellijPlatform {
