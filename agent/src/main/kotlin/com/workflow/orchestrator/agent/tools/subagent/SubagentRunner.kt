@@ -6,9 +6,9 @@ import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.agent.ide.IdeContext
 import com.workflow.orchestrator.agent.loop.AgentLoop
-import com.workflow.orchestrator.agent.prompt.IntegrationFlags
 import com.workflow.orchestrator.agent.loop.ContextManager
 import com.workflow.orchestrator.agent.loop.LoopResult
+import com.workflow.orchestrator.agent.prompt.IntegrationFlags
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolRegistry
 import com.workflow.orchestrator.agent.tools.background.BackgroundEligibility
