@@ -3,6 +3,7 @@
 package com.workflow.orchestrator.agent.tools.subagent
 
 import com.workflow.orchestrator.agent.ide.*
+import com.workflow.orchestrator.agent.prompt.IntegrationFlags
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.BeforeEach
@@ -133,6 +134,9 @@ class SubagentSystemPromptSnapshotTest {
             // which differs macOS vs Linux CI and broke the golden comparison).
             homeDir = "/home/snapshot",
             completingYourTaskSection = COMPLETING_SECTION,
+            // Subagent snapshots use ALL to preserve pre-1b content for regression
+            // (sub-agent integration gating via persona registry is Phase 1c work).
+            integrations = IntegrationFlags.ALL,
         )
 
     // ==================== Regeneration Test ====================

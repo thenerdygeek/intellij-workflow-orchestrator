@@ -248,6 +248,8 @@ Key files: `ide/IdeContext.kt`, `ide/IdeContextDetector.kt`, `ide/ProjectScanner
 
 **Backward compatibility:** `ideContext = null` produces the same prompt as before (IntelliJ-flavored defaults).
 
+Integration-specific prose (role integrations clause, `jira:` link scheme, Project-integrations tool list, project_context state list, Sonar tip, Jira Transition section) is gated on `IntegrationFlags` (derived from `ConnectionSettings.*Url.isNotBlank()`, passed into `build()`). All-ON reproduces the pre-1b prompt (snapshot parity). Snapshots: the 7 orchestrator IDE variants + 7 sub-agent variants run with `IntegrationFlags.ALL`; `no-integrations` + `jira-only` + `no-jira` pin the gating. Sub-agents gate on their own persona registry (`registry.has`), the orchestrator on `ConnectionSettings`.
+
 ### Agent Persona Filtering
 
 `AgentConfigLoader.filterByIdeContext()` gates language-specific personas:
@@ -996,7 +998,7 @@ Sub-agents build their system prompt via `SubagentSystemPromptBuilder` (in `tool
 
 **IdeContext propagation:** `SpawnAgentTool` passes the parent's `IdeContext` into `SubagentRunner`. A sub-agent running in PyCharm sees "PyCharm" in role and system-info sections; one running in IntelliJ IDEA sees "IntelliJ IDEA". Context is null-safe — omitting it produces IntelliJ-flavored defaults (backward compatible).
 
-**Snapshot tests:** `SubagentSystemPromptSnapshotTest` pins 5 variants to lock in composed output:
+**Snapshot tests:** `SubagentSystemPromptSnapshotTest` pins 7 variants to lock in composed output:
 
 | Snapshot file | Persona | IdeContext |
 |---|---|---|
@@ -1005,6 +1007,8 @@ Sub-agents build their system prompt via `SubagentSystemPromptBuilder` (in `tool
 | `python-engineer-pycharm-professional.txt` | python-engineer | PyCharm Pro + Django + Poetry |
 | `test-automator-null-context.txt` | test-automator | null (baseline) |
 | `architect-reviewer-intellij-community.txt` | architect-reviewer | IC + Maven, no Spring |
+| `research-null-context.txt` | research | null (baseline) |
+| `research-intellij-ultimate.txt` | research | IU + Spring + Gradle |
 
 Regenerate: `./gradlew :agent:test --tests "*SubagentSystemPromptSnapshotTest*generate all golden*"`
 Validate: `./gradlew :agent:test --tests "*SubagentSystemPromptSnapshotTest*"`

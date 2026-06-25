@@ -3,6 +3,7 @@
 package com.workflow.orchestrator.agent.tools.subagent
 
 import com.workflow.orchestrator.agent.ide.IdeContext
+import com.workflow.orchestrator.agent.prompt.IntegrationFlags
 import com.workflow.orchestrator.agent.prompt.SkillMetadata
 import com.workflow.orchestrator.agent.prompt.SystemPrompt
 
@@ -86,6 +87,13 @@ object SubagentSystemPromptBuilder {
         // WA-1 structural no-op: under NativeProtocol the chokepoint (MessageStateHandler.consumeDialectDriftFlag)
         // short-circuits to false, so dialectDriftDetected is always false here — no explicit guard needed.
         dialectDriftDetected: Boolean = false,
+        /**
+         * Which integrations are active for this sub-agent's prompt. Sub-agents gate on the
+         * persona registry (whether the integration's tools are in their tool set); passed from
+         * the orchestrator's resolved flags so the same ConnectionSettings flow works both ways.
+         * Default NONE = open-source-neutral. Set to ALL for snapshot tests to get stable output.
+         */
+        integrations: IntegrationFlags = IntegrationFlags.NONE,
     ): String {
         val sections = agentConfig?.promptSections ?: PromptSectionsConfig()
 
@@ -143,6 +151,8 @@ object SubagentSystemPromptBuilder {
             includeMemorySection = includeMemory,
             // ---- web tools availability (inherited from orchestrator registry) ----
             hasWebTools = hasWebTools,
+            // ---- integration gating (Phase 1b de-convention) ----
+            integrations = integrations,
         )
 
         return base + SECTION_SEP + completingYourTaskSection

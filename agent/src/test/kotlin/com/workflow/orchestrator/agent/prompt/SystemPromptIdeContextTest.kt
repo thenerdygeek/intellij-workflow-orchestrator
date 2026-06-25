@@ -18,15 +18,17 @@ class SystemPromptIdeContextTest {
         private val SNAPSHOT_DIR = "src/test/resources/prompt-snapshots"
 
         /** Standard build params used for all snapshots (consistent, reproducible) */
-        private fun buildPrompt(ideContext: IdeContext? = null) = SystemPrompt.build(
+        private fun buildPrompt(
+            ideContext: IdeContext? = null,
+            integrations: IntegrationFlags = IntegrationFlags.ALL,
+        ) = SystemPrompt.build(
             projectName = "SnapshotProject",
             projectPath = "/snapshot/project",
             osName = "Linux",
             shell = "/bin/bash",
-            // Pin homeDir so snapshots are platform-independent (default reads System user.home,
-            // which differs macOS vs Linux CI and broke the golden comparison).
             homeDir = "/home/snapshot",
             ideContext = ideContext,
+            integrations = integrations,
         )
 
         private fun saveSnapshot(name: String, content: String) {
@@ -134,12 +136,15 @@ class SystemPromptIdeContextTest {
         saveSnapshot("pycharm-community", buildPrompt(pycharmCommunity()))
         saveSnapshot("webstorm", buildPrompt(webstorm()))
         saveSnapshot("intellij-ultimate-mixed", buildPrompt(intellijUltimateMixed()))
+        saveSnapshot("no-integrations", buildPrompt(null, IntegrationFlags.NONE))
+        saveSnapshot("jira-only", buildPrompt(null, IntegrationFlags(jira = true)))
+        saveSnapshot("no-jira", buildPrompt(null, IntegrationFlags(bamboo = true, sonar = true, bitbucket = true)))
 
         // Verify all files were created
         val dir = File(SNAPSHOT_DIR)
         assertTrue(dir.exists())
-        assertEquals(7, dir.listFiles()?.count { it.extension == "txt" },
-            "Should have created 7 snapshot files")
+        assertEquals(10, dir.listFiles()?.count { it.extension == "txt" },
+            "Should have created 10 snapshot files")
     }
 
     @Test
@@ -513,6 +518,16 @@ class SystemPromptIdeContextTest {
         assertEquals(snapshot, prompt,
             "Prompt for IntelliJ Ultimate (mixed Java+Python) has changed from golden snapshot. " +
             "If intentional, re-run 'generate all golden snapshots' to update.")
+    }
+
+    @Test fun `SNAPSHOT no-integrations matches golden file`() {
+        assertEquals(loadSnapshot("no-integrations"), buildPrompt(null, IntegrationFlags.NONE))
+    }
+    @Test fun `SNAPSHOT jira-only matches golden file`() {
+        assertEquals(loadSnapshot("jira-only"), buildPrompt(null, IntegrationFlags(jira = true)))
+    }
+    @Test fun `SNAPSHOT no-jira matches golden file`() {
+        assertEquals(loadSnapshot("no-jira"), buildPrompt(null, IntegrationFlags(bamboo = true, sonar = true, bitbucket = true)))
     }
 
     // ==================== Cross-Variant Isolation Tests ====================

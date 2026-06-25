@@ -170,7 +170,14 @@ object SystemPrompt {
          * surfacing the actual set up-front. The LLM can still call
          * `delegation(action="list_targets")` for a fresh authoritative list.
          */
-        delegationTargets: List<DelegationTarget> = emptyList()
+        delegationTargets: List<DelegationTarget> = emptyList(),
+        /**
+         * Which Atlassian/Sonar integrations are configured. Gates the prompt's integration-specific
+         * fragments (Phase 1b de-convention). Default NONE = open-source-neutral (no stack mentioned).
+         * Resolved by the caller from ConnectionSettings and passed in — build() stays pure so the
+         * golden-snapshot tests need no Application. ALL reproduces the pre-1b prompt byte-for-byte.
+         */
+        integrations: IntegrationFlags = IntegrationFlags.NONE,
     ): String = buildString {
 
         // 0. DIALECT-DRIFT CORRECTIVE REMINDER (primacy zone, one-shot)
@@ -198,7 +205,7 @@ object SystemPrompt {
         }
 
         // 1. AGENT ROLE
-        append(agentRoleOverride ?: agentRole(ideContext))
+        append(agentRoleOverride ?: agentRole(ideContext, integrations))
 
         // 2. TASK MANAGEMENT (typed task system — always emitted)
         if (includeTaskManagement) {
@@ -215,7 +222,7 @@ object SystemPrompt {
         // 3b. OUTPUT FORMATTING (hyperlinks for code/file/ticket mentions in prose)
         if (includeOutputFormatting) {
             append(SECTION_SEP)
-            append(outputFormatting())
+            append(outputFormatting(integrations.jira))
         }
 
         // 4. ACT VS PLAN MODE
@@ -237,7 +244,7 @@ object SystemPrompt {
         // 5. CAPABILITIES
         if (includeCapabilities) {
             append(SECTION_SEP)
-            append(capabilities(projectPath, ideContext, delegationOutboundEnabled, delegationTargets, hasWebTools))
+            append(capabilities(projectPath, ideContext, delegationOutboundEnabled, delegationTargets, hasWebTools, integrations))
         }
 
         // 5b. MEMORY INDEX CONTENT (moved from post-Objective to land in the primacy zone)
@@ -294,7 +301,7 @@ object SystemPrompt {
         // 7. RULES
         if (includeRules) {
             append(SECTION_SEP)
-            append(rules(projectPath, ideContext, availableModels, includeSubagentDelegationInRules, hasWebTools))
+            append(rules(projectPath, ideContext, availableModels, includeSubagentDelegationInRules, hasWebTools, integrations.jira))
         }
 
         // 8. SYSTEM INFO
@@ -332,9 +339,17 @@ object SystemPrompt {
      * Section 1: Agent Role
      * Ported from: agent_role.ts
      */
-    private fun agentRole(ideContext: IdeContext?): String {
+    private fun agentRole(ideContext: IdeContext?, integrations: IntegrationFlags): String {
         val ideName = ideContext?.productName ?: "IntelliJ IDEA"
-        return "You are an AI coding agent running inside $ideName. You have programmatic access to the IDE's debugger, test runner, code analysis, build system, refactoring engine, and enterprise integrations (Jira, Bamboo, SonarQube, Bitbucket). You help users with software engineering tasks by using IDE-native tools that are faster and more accurate than shell equivalents. You are highly skilled with extensive knowledge of programming languages, frameworks, design patterns, and best practices."
+        val names = buildList {
+            if (integrations.jira) add("Jira")
+            if (integrations.bamboo) add("Bamboo")
+            if (integrations.sonar) add("SonarQube")
+            if (integrations.bitbucket) add("Bitbucket")
+        }
+        val integrationsClause =
+            if (names.isEmpty()) "" else ", and enterprise integrations (${names.joinToString(", ")})"
+        return "You are an AI coding agent running inside $ideName. You have programmatic access to the IDE's debugger, test runner, code analysis, build system, refactoring engine$integrationsClause. You help users with software engineering tasks by using IDE-native tools that are faster and more accurate than shell equivalents. You are highly skilled with extensive knowledge of programming languages, frameworks, design patterns, and best practices."
     }
 
     /**
@@ -393,19 +408,23 @@ Key rules:
 - After create_file or edit_file, the IDE may auto-format the file (indentation, imports, quotes). The tool response includes a diff context (≈3 lines before/after the edit). If you need to verify formatting of unrelated regions, re-read the file with read_file.
 - Do not create files unless absolutely necessary. Prefer editing existing files to avoid file bloat."""
 
-    private fun outputFormatting(): String = """OUTPUT FORMATTING
+    private fun outputFormatting(jiraConfigured: Boolean): String {
+        val jiraLead = if (jiraConfigured) ", or Jira ticket" else ""
+        val jiraScheme = if (jiraConfigured) "\n- Jira tickets: [PROJ-1234](jira:PROJ-1234)" else ""
+        val jiraExampleTail = if (jiraConfigured) ", a regression from [WORK-1234](jira:WORK-1234)" else ""
+        return """OUTPUT FORMATTING
 
-In prose, ALWAYS format a mention of a file, code symbol, or Jira ticket as a markdown link with one of the custom URL schemes below — NEVER as plain text (the chat UI renders these as clickable navigation; plain text is dead). Unresolvable symbols fall back to plain text automatically.
+In prose, ALWAYS format a mention of a file, code symbol${jiraLead} as a markdown link with one of the custom URL schemes below — NEVER as plain text (the chat UI renders these as clickable navigation; plain text is dead). Unresolvable symbols fall back to plain text automatically.
 
 Schemes:
 - Files: [path/to/Foo.kt](file:path/to/Foo.kt) — with a line [Foo.kt:42](file:path/to/Foo.kt:42) or range [Foo.kt:42-58](file:path/to/Foo.kt:42-58)
-- Code symbols (any language): [Foo](symbol:com.example.Foo) for a type, [Foo#run](symbol:com.example.Foo#run) for a member. Always use the fully qualified name; bare names may not resolve.
-- Jira tickets: [PROJ-1234](jira:PROJ-1234)
+- Code symbols (any language): [Foo](symbol:com.example.Foo) for a type, [Foo#run](symbol:com.example.Foo#run) for a member. Always use the fully qualified name; bare names may not resolve.$jiraScheme
 - External URLs: standard markdown link
 
-EXAMPLE: I traced the bug to [AgentService#run](symbol:com.workflow.orchestrator.agent.service.AgentService#run) at [AgentService.kt:142-156](file:agent/src/main/kotlin/AgentService.kt:142-156), a regression from [WORK-1234](jira:WORK-1234).
+EXAMPLE: I traced the bug to [AgentService#run](symbol:com.workflow.orchestrator.agent.service.AgentService#run) at [AgentService.kt:142-156](file:agent/src/main/kotlin/AgentService.kt:142-156)$jiraExampleTail.
 
 CARVE-OUT: inside fenced code blocks and inline code spans, do NOT linkify — code must stay verbatim so it can be copied. Hyperlink formatting applies to prose only."""
+    }
 
     /**
      * Section 4: Act vs Plan Mode
@@ -452,6 +471,7 @@ In each user message, the environment_details will specify the current mode. The
         delegationOutboundEnabled: Boolean = false,
         delegationTargets: List<DelegationTarget> = emptyList(),
         hasWebTools: Boolean = true,
+        integrations: IntegrationFlags = IntegrationFlags.NONE,
     ): String = buildString {
         val ideName = ideContext?.productName ?: "IntelliJ IDEA"
         appendLine("CAPABILITIES")
@@ -518,7 +538,15 @@ In each user message, the environment_details will specify the current mode. The
         appendLine("- **Managing run/debug configurations** → runtime_config (get_run_configurations, create/modify/delete_run_config — uses [Agent] prefix for safety)")
         appendLine("- **Code quality** → run_inspections, list_quickfixes, problem_view (current IDE Problems panel snapshot), format_code, optimize_imports")
         appendLine("- **Git operations** → use run_command (e.g. `git log --oneline -20`, `git diff HEAD~1`, `git blame -L 10,30 path/to/file`); use changelist_shelve for IntelliJ changelist/shelve operations")
-        appendLine("- **Project integrations** → jira, bamboo_builds, bamboo_plans, sonar, bitbucket_pr, bitbucket_repo, bitbucket_review")
+        val integrationTools = buildList {
+            if (integrations.jira) add("jira")
+            if (integrations.bamboo) { add("bamboo_builds"); add("bamboo_plans") }
+            if (integrations.sonar) add("sonar")
+            if (integrations.bitbucket) { add("bitbucket_pr"); add("bitbucket_repo"); add("bitbucket_review") }
+        }
+        if (integrationTools.isNotEmpty()) {
+            appendLine("- **Project integrations** → ${integrationTools.joinToString(", ")}")
+        }
         appendLine("- **Database** → db_list_profiles, db_list_databases, db_schema, db_query, db_stats, db_explain")
         appendLine()
         appendLine("**Usage tips:**")
@@ -534,10 +562,21 @@ In each user message, the environment_details will specify the current mode. The
             else -> "web service endpoints"
         }
         appendLine("- curl/wget to localhost/127.0.0.1 is always allowed — useful for testing $endpointType. Remote URLs require approval.")
-        appendLine("- Load project_context via tool_search early to get comprehensive state: branch, uncommitted changes, active Jira ticket, service keys, PR status, build results, Sonar quality gate, project type.")
+        val contextState = buildList {
+            add("branch"); add("uncommitted changes")
+            if (integrations.jira) add("active Jira ticket")
+            add("service keys")
+            if (integrations.bitbucket) add("PR status")
+            if (integrations.bamboo) add("build results")
+            if (integrations.sonar) add("Sonar quality gate")
+            add("project type")
+        }
+        appendLine("- Load project_context via tool_search early to get comprehensive state: ${contextState.joinToString(", ")}.")
         appendLine("- render_artifact tool: interactive React visualizations in chat. Load the frontend-design skill first for component APIs. The sandbox provides, as in-scope globals (use directly, no imports; NO network — data must be inline): Tailwind, shadcn-style UI primitives (Card, Badge, Tabs, Dialog, Tooltip, …), Recharts, all Lucide icons, D3, motion (Framer Motion), React Flow (for flow/state/pipeline/dependency diagrams — not card grids), @tanstack/react-table, date-fns, and colord. If you reference a symbol the sandbox doesn't have, the tool returns the full available-scope list so you can swap to an equivalent.")
         appendLine("- Database workflow sequence: db_list_profiles → db_list_databases → db_schema (hierarchical: profile→schemas, +schema→tables, +table→columns/indexes/FKs) → db_stats (sizes/row counts before large queries) → db_query (read-only SELECT) → db_explain (plan / slow-query diagnosis). Profiles are server-level — one profile reaches every database on that server via the optional `database` parameter.")
-        appendLine("- After refactoring code, use sonar(action=\"local_analysis\", files=...) to get immediate SonarQube feedback on the changed files without waiting for the CI pipeline to complete a full scan. This runs the Sonar scanner locally and fetches fresh issues, hotspots, coverage, and duplications for exactly the files you changed.")
+        if (integrations.sonar) {
+            appendLine("- After refactoring code, use sonar(action=\"local_analysis\", files=...) to get immediate SonarQube feedback on the changed files without waiting for the CI pipeline to complete a full scan. This runs the Sonar scanner locally and fetches fresh issues, hotspots, coverage, and duplications for exactly the files you changed.")
+        }
         appendLine("- You can call multiple tools in a single response. If calls are independent, make them all in parallel for efficiency. If calls depend on each other, run them sequentially.")
         append("- For long-running shell commands started via run_command, use `background_process(action=kill)` to terminate and send_stdin to feed input to a still-running process. Use current_time when you need an authoritative timestamp (do not guess). Use ask_user_input for short structured prompts (distinct from ask_followup_question, which is conversational). ask_followup_question has two modes: simple mode (pass `question` — shown in chat, user types an answer) and wizard mode (pass `questions` as a JSON array — renders a structured wizard with single- or multiple-choice options per question). Default to simple mode for one free-text or single-choice question. Reach for wizard mode whenever you have two or more related decisions to gather at once, OR a single question where the user may legitimately pick more than one option (type=\"multiple\").")
         appendLine()
@@ -744,6 +783,7 @@ In each user message, the environment_details will specify the current mode. The
         availableModels: List<String>? = null,
         includeSubagentDelegationInRules: Boolean = true,
         hasWebTools: Boolean = true,
+        jiraConfigured: Boolean = false,
     ): String = buildString {
         appendLine("RULES")
         appendLine()
@@ -854,18 +894,20 @@ In each user message, the environment_details will specify the current mode. The
         appendLine()
 
         // Jira Transition Retry Pattern
-        appendLine("# Jira Transition — Field Collection Pattern")
-        appendLine("When calling jira(action=transition, ...):")
-        appendLine("- If the response payload_type is `missing_required_fields`, do NOT hallucinate field values.")
-        appendLine("  For each listed field, call ask_followup_question asking the user for the field name and any provided hint (e.g. \"Enter reviewer username\").")
-        appendLine("  After collecting all values, retry jira(action=transition, key=..., transition_id=..., fields={<fieldId>: <value>, ...}).")
-        appendLine("- If the response payload_type is `requires_interaction` (RequiresInteraction), surface the")
-        appendLine("  transition name to the user via attempt_completion and stop — dialog opening is not a loop concern.")
-        appendLine("- Never re-ask the same field in the same session if the user already provided a value; reuse the previously collected value.")
-        appendLine("- fields format: user/assignee/reviewer: {\"name\": \"username\"} | labels: [\"label1\", \"label2\"] |")
-        appendLine("  priority/select/option: {\"id\": \"option-id\"} | multi select: [{\"id\": \"a\"}, {\"id\": \"b\"}] |")
-        appendLine("  cascading: {\"value\": \"parent\", \"child\": {\"value\": \"child\"}} | version/component: {\"id\": \"id\"} or [{\"id\": \"id\"}, ...]")
-        appendLine()
+        if (jiraConfigured) {
+            appendLine("# Jira Transition — Field Collection Pattern")
+            appendLine("When calling jira(action=transition, ...):")
+            appendLine("- If the response payload_type is `missing_required_fields`, do NOT hallucinate field values.")
+            appendLine("  For each listed field, call ask_followup_question asking the user for the field name and any provided hint (e.g. \"Enter reviewer username\").")
+            appendLine("  After collecting all values, retry jira(action=transition, key=..., transition_id=..., fields={<fieldId>: <value>, ...}).")
+            appendLine("- If the response payload_type is `requires_interaction` (RequiresInteraction), surface the")
+            appendLine("  transition name to the user via attempt_completion and stop — dialog opening is not a loop concern.")
+            appendLine("- Never re-ask the same field in the same session if the user already provided a value; reuse the previously collected value.")
+            appendLine("- fields format: user/assignee/reviewer: {\"name\": \"username\"} | labels: [\"label1\", \"label2\"] |")
+            appendLine("  priority/select/option: {\"id\": \"option-id\"} | multi select: [{\"id\": \"a\"}, {\"id\": \"b\"}] |")
+            appendLine("  cascading: {\"value\": \"parent\", \"child\": {\"value\": \"child\"}} | version/component: {\"id\": \"id\"} or [{\"id\": \"id\"}, ...]")
+            appendLine()
+        }
 
         // Safety & Reversibility
         appendLine("# Safety & Reversibility")
