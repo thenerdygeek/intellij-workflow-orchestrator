@@ -227,6 +227,36 @@ Key things a first-timer must know (the checklist covers each in detail):
 
 ---
 
+## 7.1 Automated UI tests (Remote Robot) — the sandbox, driven by code
+
+There's a **third** kind of test: ones that launch a real sandbox IDE and drive it
+(clicks, assertions, screenshots) **without a human**, via JetBrains' **Remote Robot**.
+Today there's one proof test — open the Workflow tool window → assert its tabs →
+screenshot.
+
+Like the manual smoke, this needs a **licensed Ultimate + a display**, so it runs on your
+licensed Windows box (or CI under Xvfb) — **not** a license-less headless machine. It's a
+**two-terminal** flow (the IDE blocks in one terminal; the tests drive it from the other):
+
+```
+# Terminal 1 — launch the sandbox IDE with the Robot Server (this blocks):
+gradlew.bat runIdeForUiTests
+
+# Terminal 2 — once it's fully started, run the tests against it:
+gradlew.bat uiTest
+```
+
+First-timer notes:
+- The XPath component locators are **best-guesses** for 2025.1 — while the sandbox runs,
+  open the live component tree at **http://127.0.0.1:8082** and tune them to match.
+- The **Agent tab is a JCEF/Chromium webview** and can't be inspected by Remote Robot, so
+  that part stays manual (see `WINDOWS-RUNIDE-CHECKLIST.md`).
+- Screenshots land in `build/ui-test-screenshots/`.
+- Full details live in the test's own header comment:
+  `src/uiTest/kotlin/com/workflow/orchestrator/uitest/WorkflowToolWindowSmokeTest.kt`.
+
+---
+
 ## 8. Troubleshooting (common first-timer snags)
 
 | Symptom | What it means / fix |
