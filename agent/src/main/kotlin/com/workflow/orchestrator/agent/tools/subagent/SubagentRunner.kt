@@ -6,6 +6,7 @@ import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.agent.ide.IdeContext
 import com.workflow.orchestrator.agent.loop.AgentLoop
+import com.workflow.orchestrator.agent.prompt.IntegrationFlags
 import com.workflow.orchestrator.agent.loop.ContextManager
 import com.workflow.orchestrator.agent.loop.LoopResult
 import com.workflow.orchestrator.agent.tools.AgentTool
@@ -640,6 +641,19 @@ class SubagentRunner(
         // it short-circuits to false without getAndSet, so no explicit guard needed here.
         val dialectDriftDetected = messageStateHandler?.consumeDialectDriftFlag() ?: false
 
+        // Gate integrations on the sub-agent's OWN registry (persona tool allowlist), not on
+        // ConnectionSettings. A persona without the jira tool must not get jira prose for a tool
+        // it can't call — even in a jira-configured install. Integration tools are only in any
+        // registry when their URL is configured, so registry-derived is never broader than
+        // ConnectionSettings-derived. Mirrors the sibling hasWebTools resolution below.
+        val integrations = IntegrationFlags(
+            jira = registry.has("jira"),
+            bamboo = registry.has("bamboo_builds") || registry.has("bamboo_plans"),
+            sonar = registry.has("sonar"),
+            bitbucket = registry.has("bitbucket_pr") || registry.has("bitbucket_repo") ||
+                registry.has("bitbucket_review"),
+        )
+
         return SubagentSystemPromptBuilder.build(
             personaRole = systemPrompt,
             agentConfig = agentConfig,
@@ -652,6 +666,7 @@ class SubagentRunner(
             // Sub-agents inherit the orchestrator's registry; if web tools are unregistered
             // there, they are also absent from the sub-agent's tool set.
             hasWebTools = registry.has("web_fetch") || registry.has("web_search"),
+            integrations = integrations,
             completingYourTaskSection = COMPLETING_YOUR_TASK_SECTION,
             dialectDriftDetected = dialectDriftDetected,
         )

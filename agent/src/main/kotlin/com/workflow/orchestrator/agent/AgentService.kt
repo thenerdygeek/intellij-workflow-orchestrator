@@ -76,6 +76,7 @@ import com.workflow.orchestrator.core.ai.OpenAiCompatBrain
 import com.workflow.orchestrator.core.ai.SourcegraphChatClient
 import com.workflow.orchestrator.core.auth.CredentialStore
 import com.workflow.orchestrator.core.model.ServiceType
+import com.workflow.orchestrator.agent.prompt.IntegrationFlags
 import com.workflow.orchestrator.core.settings.ConnectionSettings
 import com.workflow.orchestrator.core.util.ProjectIdentifier
 import com.workflow.orchestrator.document.service.TikaDocumentExtractor
@@ -2120,6 +2121,12 @@ class AgentService(
                     // hasWebTools is re-evaluated on every prompt rebuild so a settings toggle
                     // mid-session (via reregisterConditionalTools) is reflected immediately.
                     val hasWebTools = registry.has("web_fetch") || registry.has("web_search")
+                    // integrations is re-evaluated on every prompt rebuild so a mid-session
+                    // settings change (e.g. adding a Jira URL) is reflected immediately,
+                    // mirroring the hasWebTools pattern above.
+                    val integrations = IntegrationFlags.from(
+                        ConnectionSettings.getInstance().state,
+                    )
                     // D6 (audit finding agent-runtime:F-9): snapshot the dialectDriftFlag ONCE
                     // per prompt build into a local before passing it to SystemPrompt.build().
                     // consumeDialectDriftFlag() is already atomic (AtomicBoolean.getAndSet), but
@@ -2154,6 +2161,7 @@ class AgentService(
                         availableShells = allowedShells,
                         availableModels = formatModelsForPrompt(ModelCache.getCached()),
                         hasWebTools = hasWebTools,
+                        integrations = integrations,
                         // One-shot — fires once per drift detection, then resets.
                         // True when the write-time guard rejected an assistant turn OR
                         // `redactDialectXmlInHistory` rewrote one at resume / retry.
@@ -3123,6 +3131,7 @@ class AgentService(
                 availableShells = allowedShells,
                 availableModels = formatModelsForPrompt(ModelCache.getCached()),
                 hasWebTools = registry.has("web_fetch") || registry.has("web_search"),
+                integrations = IntegrationFlags.from(ConnectionSettings.getInstance().state),
                 researchIndex = resumeResearchIndex,
                 researchIndexPath = resumeResearchDirPath.toString(),
                 // One-shot — fires only if the resume-path cleanup above redacted turns.
