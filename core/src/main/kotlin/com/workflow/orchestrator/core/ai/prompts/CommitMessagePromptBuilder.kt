@@ -4,17 +4,18 @@ import com.workflow.orchestrator.core.ai.dto.ChatMessage
 import com.workflow.orchestrator.core.workflow.TicketDetails
 
 /**
- * Enterprise-grade commit message generation using Conventional Commits.
+ * Enterprise-grade commit message generation with configurable format.
  *
  * Design decisions:
  * - System message frames the role (consistent formatting, no hallucination)
  * - User message provides diff + context (code intelligence, recent history)
  * - "Why not what" emphasis in body bullets (enterprise traceability)
- * - Issue-type-driven commit type (Bug → fix, Story/Task/New Feature → feat)
+ * - Issue-type-driven commit type (Bug → fix, Story/Task/New Feature → feat) [CONVENTIONAL only]
  * - Multi-candidate ticket selection — when the active ticket and the branch ticket
  *   differ, both are sent and the LLM picks the one that best matches the diff
  * - Recent commits as a soft style reference (NOT format authority)
  * - No diff truncation — Sourcegraph supports 150K input tokens
+ * - PLAIN format: escape hatch for teams that don't use Conventional Commits
  */
 object CommitMessagePromptBuilder {
 
@@ -24,8 +25,17 @@ object CommitMessagePromptBuilder {
     /** A candidate ticket plus where it was discovered. */
     data class TicketCandidate(val source: TicketSource, val details: TicketDetails)
 
-    /** System message — role framing for consistent, parseable output. */
-    private const val SYSTEM_MESSAGE = """You are an expert at writing git commit messages following the Conventional Commits specification. You analyze diffs and produce clear, accurate commit messages that help teams understand what changed and why.
+    /** System message — role framing for consistent, parseable output (Conventional Commits). */
+    private const val SYSTEM_MESSAGE =
+        """You are an expert at writing git commit messages following the Conventional Commits specification. """ +
+            """You analyze diffs and produce clear, accurate commit messages that help teams understand what changed and why.
+
+Output ONLY the raw commit message. No commentary, no markdown code blocks, no explanation."""
+
+    /** System message for PLAIN format — no Conventional Commits framing. */
+    private const val PLAIN_SYSTEM_MESSAGE =
+        """You are an expert at writing clear, concise git commit messages. """ +
+            """You analyze diffs and produce accurate messages that help teams understand what changed and why.
 
 Output ONLY the raw commit message. No commentary, no markdown code blocks, no explanation."""
 
@@ -35,16 +45,23 @@ Output ONLY the raw commit message. No commentary, no markdown code blocks, no e
         filesSummary: String = "",
         recentCommits: List<String> = emptyList(),
         codeContext: String = "",
-        candidateTickets: List<TicketCandidate> = emptyList()
+        candidateTickets: List<TicketCandidate> = emptyList(),
+        format: CommitMessageFormat = CommitMessageFormat.CONVENTIONAL
     ): List<ChatMessage> {
-        val userMessage = buildUserMessage(diff, ticketId, filesSummary, recentCommits, codeContext, candidateTickets)
+        val systemMessage = if (format == CommitMessageFormat.PLAIN) PLAIN_SYSTEM_MESSAGE else SYSTEM_MESSAGE
+        val userMessage = when (format) {
+            CommitMessageFormat.CONVENTIONAL ->
+                buildConventionalUserMessage(diff, ticketId, filesSummary, recentCommits, codeContext, candidateTickets)
+            CommitMessageFormat.PLAIN ->
+                buildPlainUserMessage(diff, ticketId, filesSummary, recentCommits, codeContext, candidateTickets)
+        }
         return listOf(
-            ChatMessage(role = "system", content = SYSTEM_MESSAGE),
+            ChatMessage(role = "system", content = systemMessage),
             ChatMessage(role = "user", content = userMessage)
         )
     }
 
-    private fun buildUserMessage(
+    private fun buildConventionalUserMessage(
         diff: String,
         ticketId: String,
         filesSummary: String,
@@ -92,21 +109,33 @@ Output ONLY the raw commit message. No commentary, no markdown code blocks, no e
         appendLine("ISSUE TYPE → COMMIT TYPE (use the chosen ticket's Type field):")
         appendLine("- Bug, Defect, Incident → fix")
         appendLine("- Story, New Feature, Improvement, Epic → feat")
-        appendLine("- Task, Sub-task → infer from the diff (fix if it's repairing broken behavior, feat if it's new behavior, refactor/perf/test/docs/chore otherwise)")
+        appendLine(
+            "- Task, Sub-task → infer from the diff (fix if it's repairing broken behavior, " +
+                "feat if it's new behavior, refactor/perf/test/docs/chore otherwise)"
+        )
         appendLine("- Spike, Investigation → chore or docs")
         appendLine("- If no ticket type is available, infer purely from the diff.")
         appendLine()
 
         // ── Rules ──
         appendLine("RULES:")
-        appendLine("- scope = domain area (auth, billing, pr-list); prefer the chosen ticket's component or label if it matches; NEVER use file paths")
+        appendLine(
+            "- scope = domain area (auth, billing, pr-list); prefer the chosen ticket's component or label if it matches; " +
+                "NEVER use file paths"
+        )
         appendLine("- Imperative mood: 'add' not 'added', 'fix' not 'fixed'")
         appendLine("- Body bullets explain WHY the change was made, not just what lines changed")
         appendLine("- AVOID: passive voice, 'This commit/change' phrasing, repeating type in summary")
         if (!hasAnyCandidate) {
-            appendLine("- No ticket is active; do NOT prepend any ticket ID to the summary, even if RECENT COMMITS show one.")
+            appendLine(
+                "- No ticket is active; do NOT prepend any ticket ID to the summary, " +
+                    "even if RECENT COMMITS show one."
+            )
         } else {
-            appendLine("- Use ONLY the ticket ID you select from CANDIDATE TICKETS. Do NOT copy ticket IDs from RECENT COMMITS — those are style/tone references only.")
+            appendLine(
+                "- Use ONLY the ticket ID you select from CANDIDATE TICKETS. " +
+                    "Do NOT copy ticket IDs from RECENT COMMITS — those are style/tone references only."
+            )
         }
         appendLine()
 
@@ -119,7 +148,10 @@ Output ONLY the raw commit message. No commentary, no markdown code blocks, no e
             appendLine("SELECT TICKET:")
             appendLine("- Choose the candidate whose summary/description/components best describes the DIFF.")
             appendLine("- If both seem to fit equally, prefer the ACTIVE ticket.")
-            appendLine("- If neither fits the DIFF (the diff is unrelated to either ticket), still use ACTIVE — but reflect the actual change in the body, not the ticket title.")
+            appendLine(
+                "- If neither fits the DIFF (the diff is unrelated to either ticket), " +
+                    "still use ACTIVE — but reflect the actual change in the body, not the ticket title."
+            )
             appendLine("- Use the chosen ticket's Type field to set the commit type per the mapping above.")
             appendLine()
         } else if (hasAnyCandidate) {
@@ -127,27 +159,73 @@ Output ONLY the raw commit message. No commentary, no markdown code blocks, no e
             appendCandidate(candidateTickets.first())
         }
 
-        // ── Recent commits (soft style reference, not format authority) ──
+        appendContextAndDiff(
+            recentCommits,
+            codeContext,
+            filesSummary,
+            diff,
+            "the FORMAT and TYPES sections above are authoritative"
+        )
+    }
+
+    private fun buildPlainUserMessage(
+        diff: String,
+        ticketId: String,
+        filesSummary: String,
+        recentCommits: List<String>,
+        codeContext: String,
+        candidateTickets: List<TicketCandidate>
+    ): String = buildString {
+        appendLine("Generate a commit message for these changes.")
+        appendLine()
+        appendLine("FORMAT:")
+        appendLine("<concise imperative summary, max 72 chars>")
+        appendLine()
+        appendLine("- Optional body: one bullet per logical change, explaining WHAT changed and WHY")
+        appendLine("- Group related edits into one bullet; trivial changes need just a summary line")
+        appendLine()
+        appendLine("RULES:")
+        appendLine("- Imperative mood: 'add' not 'added', 'fix' not 'fixed'")
+        appendLine("- Do NOT use a Conventional-Commits type prefix such as 'feat:' or 'fix:'")
+        appendLine("- Body explains WHY the change was made, not just what lines changed")
+        appendLine("- AVOID: passive voice, 'This commit/change' phrasing")
+        if (ticketId.isNotBlank() || candidateTickets.isNotEmpty()) {
+            appendLine(
+                "- You MAY reference the ticket if it clarifies the change, but do not force any prefix format."
+            )
+        }
+        appendLine()
+        appendContextAndDiff(recentCommits, codeContext, filesSummary, diff, "the FORMAT/RULES above are authoritative")
+    }
+
+    /**
+     * Appends the shared context/diff tail (RECENT COMMITS / CODE CONTEXT / CHANGED FILES / DIFF).
+     *
+     * The [authoritativeRef] param keeps CONVENTIONAL's exact wording byte-identical
+     * ("the FORMAT and TYPES sections above are authoritative") while PLAIN uses its own
+     * ("the FORMAT/RULES above are authoritative").
+     */
+    private fun StringBuilder.appendContextAndDiff(
+        recentCommits: List<String>,
+        codeContext: String,
+        filesSummary: String,
+        diff: String,
+        authoritativeRef: String
+    ) {
         if (recentCommits.isNotEmpty()) {
-            appendLine("RECENT COMMITS (for tone and vocabulary only — the FORMAT and TYPES sections above are authoritative):")
+            appendLine("RECENT COMMITS (for tone and vocabulary only — $authoritativeRef):")
             recentCommits.forEach { appendLine("  $it") }
             appendLine()
         }
-
-        // ── Code intelligence ──
         if (codeContext.isNotBlank()) {
             appendLine("CODE CONTEXT:")
             appendLine(codeContext)
             appendLine()
         }
-
-        // ── Changed files ──
         if (filesSummary.isNotBlank()) {
             appendLine("CHANGED FILES: $filesSummary")
             appendLine()
         }
-
-        // ── Diff (no truncation — Sourcegraph supports 150K input) ──
         appendLine("DIFF:")
         append(diff)
     }

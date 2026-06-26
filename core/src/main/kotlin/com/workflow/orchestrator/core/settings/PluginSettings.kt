@@ -104,6 +104,9 @@ class PluginSettings : SimplePersistentStateComponent<PluginSettings.State>(Stat
         var maxPrTitleLength by property(120)
         var prDefaultReviewers by string("")
 
+        /** AI commit-message style: "conventional" (Conventional Commits, default) or "plain". */
+        var commitMessageFormat by string("conventional")
+
         // Jira custom fields
         var epicLinkFieldId by string("customfield_10014")
         /** Custom field ID for the Jira acceptance-criteria field (e.g. "customfield_10001"). Null = unused. */
@@ -150,6 +153,7 @@ class PluginSettings : SimplePersistentStateComponent<PluginSettings.State>(Stat
         // ── Telemetry & Logs settings ─────────────────────────────────────────────
         var logLevel by string("INFO")
         var diagnosticJsonlEnabled by property(true)
+
         /**
          * When true, a small rotating file containing ONLY this plugin's own log records is
          * written to `~/.workflow-orchestrator/diagnostics/plugin-{0,1,2}.log` (see

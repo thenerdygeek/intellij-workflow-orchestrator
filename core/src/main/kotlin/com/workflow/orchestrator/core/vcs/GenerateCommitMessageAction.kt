@@ -25,6 +25,7 @@ import com.intellij.vcs.commit.CommitWorkflowUi
 import com.intellij.openapi.command.CommandProcessor
 import com.workflow.orchestrator.core.psi.PsiContextEnricher
 import com.workflow.orchestrator.core.ai.LlmBrainFactory
+import com.workflow.orchestrator.core.ai.prompts.CommitMessageFormat
 import com.workflow.orchestrator.core.ai.prompts.CommitMessagePromptBuilder
 import com.workflow.orchestrator.core.model.ApiResult
 import com.workflow.orchestrator.core.settings.PluginSettings
@@ -303,7 +304,8 @@ class GenerateCommitMessageAction : AnAction(
                         filesSummary = filesSummary,
                         recentCommits = recentCommits,
                         codeContext = codeContext,
-                        candidateTickets = candidateTickets
+                        candidateTickets = candidateTickets,
+                        format = CommitMessageFormat.fromSetting(settings.state.commitMessageFormat)
                     )
 
                     val accumulated = StringBuilder()
