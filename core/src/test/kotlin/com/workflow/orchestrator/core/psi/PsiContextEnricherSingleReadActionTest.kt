@@ -113,6 +113,33 @@ class PsiContextEnricherSingleReadActionTest {
         }
     }
 
+    @Test
+    fun `enricher falls back to ModuleManager for non-Maven projects`() {
+        val src = enricherSource()
+        // The Gradle/other-build-system fallback must be wired via ModuleUtilCore.
+        assertTrue(
+            src.contains("findModuleForFile"),
+            "detectModule must fall back to ModuleUtilCore.findModuleForFile when Maven detection yields null"
+        )
+        // Still exactly ONE read action and ONE file resolution after the change (B19/P2-22).
+        assertEquals(
+            1,
+            Regex("""readAction\s*\{""").findAll(src).count(),
+            "PsiContextEnricher must still contain exactly one readAction block",
+        )
+        assertEquals(
+            1,
+            Regex(Regex.escape("findFileByPath")).findAll(src).count(),
+            "PsiContextEnricher must still resolve the VirtualFile exactly once",
+        )
+    }
+
+    @Test
+    fun `PsiContext exposes moduleName field`() {
+        val fields = PsiContextEnricher.PsiContext::class.java.declaredFields.map { it.name }
+        assertTrue("moduleName" in fields, "PsiContext.moduleName must exist (renamed from mavenModule)")
+    }
+
     private fun enricherSource(): String {
         val root = findProjectRoot()
         return File(

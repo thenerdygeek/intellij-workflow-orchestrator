@@ -11,11 +11,11 @@ class PsiContextEnricherTest {
             className = null,
             classAnnotations = emptyList(),
             methodAnnotations = emptyMap(),
-            mavenModule = null,
+            moduleName = null,
             isTestFile = false
         )
         assertNull(ctx.className)
-        assertNull(ctx.mavenModule)
+        assertNull(ctx.moduleName)
         assertFalse(ctx.isTestFile)
         assertTrue(ctx.classAnnotations.isEmpty())
         assertTrue(ctx.methodAnnotations.isEmpty())
@@ -27,13 +27,13 @@ class PsiContextEnricherTest {
             className = "com.example.UserService",
             classAnnotations = listOf("Service", "Transactional"),
             methodAnnotations = mapOf("getUser" to listOf("Transactional", "Override")),
-            mavenModule = "user-service",
+            moduleName = "user-service",
             isTestFile = false
         )
         assertEquals("com.example.UserService", ctx.className)
         assertEquals(2, ctx.classAnnotations.size)
         assertTrue(ctx.classAnnotations.contains("Service"))
         assertEquals(listOf("Transactional", "Override"), ctx.methodAnnotations["getUser"])
-        assertEquals("user-service", ctx.mavenModule)
+        assertEquals("user-service", ctx.moduleName)
     }
 }

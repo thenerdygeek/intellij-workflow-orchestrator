@@ -1,6 +1,7 @@
 package com.workflow.orchestrator.core.psi
 
 import com.intellij.openapi.application.readAction
+import com.intellij.openapi.module.ModuleUtilCore
 import com.intellij.openapi.progress.ProcessCanceledException
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.roots.ProjectFileIndex
@@ -17,7 +18,7 @@ class PsiContextEnricher(private val project: Project) {
         val className: String?,
         val classAnnotations: List<String>,
         val methodAnnotations: Map<String, List<String>>,
-        val mavenModule: String?,
+        val moduleName: String?,
         val isTestFile: Boolean
     )
 
@@ -39,7 +40,7 @@ class PsiContextEnricher(private val project: Project) {
             className = psiClass?.qualifiedName,
             classAnnotations = psiClass?.let { extractAnnotations(it) } ?: emptyList(),
             methodAnnotations = psiClass?.let { extractMethodAnnotations(it) } ?: emptyMap(),
-            mavenModule = detectMavenModule(vFile),
+            moduleName = detectModule(vFile),
             isTestFile = isTest
         )
     }
@@ -56,18 +57,33 @@ class PsiContextEnricher(private val project: Project) {
         }.filterValues { it.isNotEmpty() }
     }
 
-    private fun detectMavenModule(vFile: VirtualFile): String? {
-        return try {
+    /**
+     * Resolves the module this file belongs to. Maven artifactId when the project is
+     * mavenized; otherwise the IDE module name (Gradle / other build systems / plain
+     * IDEA modules) via ModuleUtilCore. Runs inside enrich()'s single read action.
+     */
+    private fun detectModule(vFile: VirtualFile): String? {
+        val maven = try {
             val mavenManager = org.jetbrains.idea.maven.project.MavenProjectsManager.getInstance(project)
-            if (!mavenManager.isMavenizedProject) return null
-            mavenManager.projects.find { mavenProject ->
-                VfsUtilCore.isAncestor(mavenProject.directoryFile, vFile, false)
-            }?.mavenId?.artifactId
+            if (!mavenManager.isMavenizedProject) {
+                null
+            } else {
+                mavenManager.projects.find { mavenProject ->
+                    VfsUtilCore.isAncestor(mavenProject.directoryFile, vFile, false)
+                }?.mavenId?.artifactId
+            }
         } catch (pce: ProcessCanceledException) {
-            // C2 review: this catch now runs INSIDE the single cancellable readAction
-            // (P2-22/B19). Swallowing a PCE (e.g. thrown for a pending write action)
-            // would let the read complete "successfully" with mavenModule = null
-            // instead of restarting — rethrow so the read action machinery retries.
+            // Inside the single cancellable readAction (P2-22/B19): rethrow so the read
+            // action machinery retries rather than completing with a null module.
+            throw pce
+        } catch (_: Exception) {
+            // Maven plugin absent (optional dependency) or any Maven API failure -> fall through.
+            null
+        }
+        if (maven != null) return maven
+        return try {
+            ModuleUtilCore.findModuleForFile(vFile, project)?.name
+        } catch (pce: ProcessCanceledException) {
             throw pce
         } catch (_: Exception) {
             null
@@ -78,7 +94,7 @@ class PsiContextEnricher(private val project: Project) {
         className = null,
         classAnnotations = emptyList(),
         methodAnnotations = emptyMap(),
-        mavenModule = null,
+        moduleName = null,
         isTestFile = false
     )
 }

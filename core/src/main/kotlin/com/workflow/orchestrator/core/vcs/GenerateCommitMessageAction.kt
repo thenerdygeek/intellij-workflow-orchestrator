@@ -416,7 +416,7 @@ class GenerateCommitMessageAction : AnAction(
                                 val fileName = path.substringAfterLast('/')
                                 append(fileName)
                                 if (ctx.isTestFile) append(" [TEST]")
-                                if (ctx.mavenModule != null) append(" (module: ${ctx.mavenModule})")
+                                if (ctx.moduleName != null) append(" (module: ${ctx.moduleName})")
                                 if (ctx.className != null) append(" — ${ctx.className}")
                                 if (ctx.classAnnotations.isNotEmpty()) {
                                     append(" @${ctx.classAnnotations.joinToString(", @")}")
