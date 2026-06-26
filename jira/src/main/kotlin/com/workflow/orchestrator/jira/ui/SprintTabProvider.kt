@@ -7,6 +7,7 @@ import com.workflow.orchestrator.core.toolwindow.EmptyStatePanel
 import com.workflow.orchestrator.core.toolwindow.WorkflowTabProvider
 import com.workflow.orchestrator.jira.service.ActiveTicketService
 import com.workflow.orchestrator.jira.service.BranchingService
+import com.workflow.orchestrator.jira.service.JiraAgileCapabilityService
 import com.workflow.orchestrator.jira.service.JiraServiceImpl
 import com.workflow.orchestrator.jira.service.SprintService
 import javax.swing.JComponent
@@ -15,6 +16,14 @@ class SprintTabProvider : WorkflowTabProvider {
 
     override val tabTitle: String = "Sprint"
     override val order: Int = 0
+
+    override fun isAvailable(project: Project): Boolean {
+        val jiraUrl = PluginSettings.getInstance(project).connections.jiraUrl
+        // Unconfigured Jira: show the tab so the user sees the "connect to Jira" empty state.
+        if (jiraUrl.isBlank()) return true
+        // Hide ONLY when the Agile API is definitively unavailable (404). Unknown/transient -> show.
+        return JiraAgileCapabilityService.getInstance(project).agileAvailableOrProbe() != false
+    }
 
     override fun createPanel(project: Project): JComponent {
         val settings = PluginSettings.getInstance(project)
