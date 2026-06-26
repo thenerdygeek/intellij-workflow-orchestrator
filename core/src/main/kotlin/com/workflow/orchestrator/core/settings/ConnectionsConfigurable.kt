@@ -3,6 +3,7 @@ package com.workflow.orchestrator.core.settings
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.invokeLater
 import com.intellij.openapi.diagnostic.Logger
+import com.intellij.openapi.options.ConfigurationException
 import com.intellij.openapi.options.SearchableConfigurable
 import com.intellij.openapi.progress.runBackgroundableTask
 import com.intellij.openapi.progress.runBlockingCancellable
@@ -129,23 +130,19 @@ class ConnectionsConfigurable(
             "Bitbucket" to connSettings.state.bitbucketUrl,
             "SonarQube" to connSettings.state.sonarUrl,
         )
+        val invalidUrlErrors = mutableListOf<String>()
         for ((name, url) in urlsToValidate) {
             if (url.isBlank()) continue  // blank = not configured, skip validation
             when (val result = BaseUrlValidator.validate(url)) {
                 is BaseUrlValidator.ValidationResult.Invalid -> {
-                    // Roll back the dialog-applied value and surface an error to the user.
-                    // ConfigurationException would prevent the settings dialog from closing;
-                    // a notification is less disruptive and more visible.
+                    // Collect, do NOT silently `return`. The old early-return aborted apply() before
+                    // saving tokens AND before clearing pendingTokens — so one bad URL silently
+                    // dropped every credential and left the panel stuck "modified". We throw
+                    // ConfigurationException below instead: the platform surfaces the error and keeps
+                    // the dialog OPEN, and pendingTokens stays intact so the user can fix the URL and
+                    // re-Apply without re-entering any tokens.
                     log.warn("[Settings:Connections] $name URL rejected by SSRF guard: ${result.reason}")
-                    com.intellij.notification.NotificationGroupManager.getInstance()
-                        .getNotificationGroup("Workflow Orchestrator")
-                        ?.createNotification(
-                            "$name URL rejected",
-                            result.reason,
-                            com.intellij.notification.NotificationType.ERROR
-                        )
-                        ?.notify(project)
-                    return  // abort apply — do not persist any settings this cycle
+                    invalidUrlErrors += "$name: ${result.reason}"
                 }
                 is BaseUrlValidator.ValidationResult.SoftWarning -> {
                     log.warn("[Settings:Connections] $name URL soft-warning: ${result.warning}")
@@ -167,6 +164,14 @@ class ConnectionsConfigurable(
                 }
                 BaseUrlValidator.ValidationResult.Valid -> { /* all good */ }
             }
+        }
+        if (invalidUrlErrors.isNotEmpty()) {
+            // Visible, blocking error that keeps the settings dialog open. Nothing below runs, so no
+            // tokens are saved and pendingTokens is preserved for the retry after the user fixes the URL.
+            throw ConfigurationException(
+                invalidUrlErrors.joinToString("\n"),
+                "Invalid Connection URL",
+            )
         }
 
         // Save credentials only on explicit Apply — not on every keystroke.
