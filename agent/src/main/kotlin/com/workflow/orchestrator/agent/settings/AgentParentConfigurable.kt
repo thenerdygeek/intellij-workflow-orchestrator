@@ -178,19 +178,10 @@ class AgentParentConfigurable(
      */
     private fun loadModelsFromServer() {
         val connections = ConnectionSettings.getInstance()
-        val credentialStore = CredentialStore()
-
         val url = connections.state.sourcegraphUrl
-        val token = credentialStore.getToken(ServiceType.SOURCEGRAPH)
 
         if (url.isBlank()) {
             modelStatusLabel?.text = "Configure Sourcegraph URL in Connections first"
-            modelStatusLabel?.foreground = JBColor.RED
-            return
-        }
-
-        if (token.isNullOrBlank()) {
-            modelStatusLabel?.text = "Configure Sourcegraph token in Connections first"
             modelStatusLabel?.foreground = JBColor.RED
             return
         }
@@ -203,6 +194,19 @@ class AgentParentConfigurable(
 
         loadScope.launch {
             try {
+                // Read the token OFF the EDT — PasswordSafe access is a slow operation that throws a
+                // SEVERE SlowOperations assertion (and hangs the model dropdown) when done on the EDT.
+                val token = CredentialStore().getToken(ServiceType.SOURCEGRAPH)
+                if (token.isNullOrBlank()) {
+                    invokeLater {
+                        modelStatusLabel?.icon = null
+                        modelStatusLabel?.text = "Configure Sourcegraph token in Connections first"
+                        modelStatusLabel?.foreground = JBColor.RED
+                        loadModelsButton?.isEnabled = true
+                    }
+                    return@launch
+                }
+
                 val client = SourcegraphChatClient(
                     baseUrl = url.trimEnd('/'),
                     tokenProvider = { token },
