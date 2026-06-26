@@ -68,5 +68,4 @@ object BranchNameValidator {
      */
     fun requiresAiSummary(pattern: String): Boolean =
         pattern.contains("{ai-summary}")
-
 }

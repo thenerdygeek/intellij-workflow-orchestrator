@@ -45,5 +45,4 @@ class BranchNameValidatorTest {
         assertTrue(name.length <= 80)
         assertFalse(name.endsWith("-"))
     }
-
 }
