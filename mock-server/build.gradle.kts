@@ -22,6 +22,12 @@ repositories {
 val ktorVersion = "3.1.1"
 
 dependencies {
+    // Standalone JVM app (NOT the IntelliJ plugin, which gets kotlin-stdlib from the platform at
+    // runtime). The global `kotlin.stdlib.default.dependency=false` (gradle.properties) omits the
+    // auto-added stdlib; without this it only lands on compile/test classpaths, so the `application`
+    // `run` task fails with NoClassDefFoundError(kotlin/jvm/functions/Function1).
+    implementation(kotlin("stdlib"))
+
     // Ktor server
     implementation("io.ktor:ktor-server-core:$ktorVersion")
     implementation("io.ktor:ktor-server-netty:$ktorVersion")

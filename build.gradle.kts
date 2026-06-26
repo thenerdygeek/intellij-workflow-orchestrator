@@ -53,7 +53,10 @@ val PLUGIN_DIST_CONFIGURATIONS = setOf(
 )
 subprojects {
     configurations.configureEach {
-        if (name in PLUGIN_DIST_CONFIGURATIONS) {
+        // :mock-server is a STANDALONE JVM app (Ktor `application` run), not a plugin-dist module —
+        // there is no IntelliJ platform to provide kotlin-stdlib at runtime, so it MUST keep stdlib
+        // on its runtimeClasspath (otherwise `:mock-server:run` → NoClassDefFoundError Function1).
+        if (name in PLUGIN_DIST_CONFIGURATIONS && project.name != "mock-server") {
             exclude(group = "org.jetbrains.kotlin", module = "kotlin-stdlib")
             exclude(group = "org.jetbrains.kotlin", module = "kotlin-stdlib-jdk7")
             exclude(group = "org.jetbrains.kotlin", module = "kotlin-stdlib-jdk8")

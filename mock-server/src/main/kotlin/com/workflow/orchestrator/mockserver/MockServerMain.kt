@@ -2,10 +2,12 @@ package com.workflow.orchestrator.mockserver
 
 import com.workflow.orchestrator.mockserver.admin.*
 import com.workflow.orchestrator.mockserver.bamboo.*
+import com.workflow.orchestrator.mockserver.bitbucket.*
 import com.workflow.orchestrator.mockserver.chaos.*
 import com.workflow.orchestrator.mockserver.config.MockConfig
 import com.workflow.orchestrator.mockserver.jira.*
 import com.workflow.orchestrator.mockserver.sonar.*
+import com.workflow.orchestrator.mockserver.sourcegraph.*
 import io.ktor.serialization.kotlinx.json.*
 import io.ktor.server.application.*
 import io.ktor.server.engine.*
@@ -13,6 +15,7 @@ import io.ktor.server.netty.*
 import io.ktor.server.plugins.calllogging.*
 import io.ktor.server.plugins.contentnegotiation.*
 import io.ktor.server.plugins.statuspages.*
+import io.ktor.server.request.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
 import io.ktor.http.*
@@ -28,6 +31,7 @@ class StateHolder<T>(var state: T)
 private val JIRA_SCENARIOS = listOf("default", "happy-path", "empty-sprint", "large-sprint", "no-active-sprint", "transition-blocked")
 private val BAMBOO_SCENARIOS = listOf("default", "happy-path", "all-builds-failing", "build-progression")
 private val SONAR_SCENARIOS = listOf("default", "happy-path", "quality-gate-warn", "metrics-missing", "auth-invalid")
+private val BITBUCKET_SCENARIOS = listOf("default", "all-merged", "empty", "happy-path")
 
 fun main() {
     val config = MockConfig()
@@ -44,11 +48,20 @@ fun main() {
     val bambooAdmin = AdminState()
     val sonarAdmin = AdminState()
 
+    val bitbucketHolder = StateHolder(BitbucketDataFactory.createDefaultState())
+    val sourcegraphState = SourcegraphState(defaultScenario = config.sourcegraphDefaultScenario)
+
+    val bitbucketChaos = ChaosConfig()
+    val sourcegraphChaos = ChaosConfig()
+
+    val bitbucketAdmin = AdminState()
+    val sourcegraphAdmin = AdminState()
+
     printBanner(config)
 
     runBlocking {
         val jobs = listOf(
-            launch {
+            launch(Dispatchers.IO) {
                 startMockServer("Jira", config.jiraPort, jiraChaos, jiraAdmin,
                     routeSetup = { routing { jiraRoutes { jiraHolder.state } } },
                     getState = { buildJsonObject { put("issueCount", jiraHolder.state.issues.size); put("sprintCount", jiraHolder.state.sprints.size) } },
@@ -67,7 +80,7 @@ fun main() {
                     scenarios = JIRA_SCENARIOS,
                 )
             },
-            launch {
+            launch(Dispatchers.IO) {
                 startMockServer("Bamboo", config.bambooPort, bambooChaos, bambooAdmin,
                     routeSetup = { routing { bambooRoutes { bambooHolder.state } } },
                     getState = { buildJsonObject { put("planCount", bambooHolder.state.plans.size); put("buildCount", bambooHolder.state.builds.size) } },
@@ -85,7 +98,7 @@ fun main() {
                     onStop = { bambooHolder.state.shutdown() },
                 )
             },
-            launch {
+            launch(Dispatchers.IO) {
                 startMockServer("SonarQube", config.sonarPort, sonarChaos, sonarAdmin,
                     routeSetup = { routing { sonarRoutes { sonarHolder.state } } },
                     getState = { buildJsonObject { put("projectCount", sonarHolder.state.projects.size); put("issueCount", sonarHolder.state.issues.size) } },
@@ -101,6 +114,51 @@ fun main() {
                         }
                     },
                     scenarios = SONAR_SCENARIOS,
+                )
+            },
+            launch(Dispatchers.IO) {
+                startMockServer("Bitbucket", config.bitbucketPort, bitbucketChaos, bitbucketAdmin,
+                    routeSetup = { routing { bitbucketRoutes { bitbucketHolder.state } } },
+                    getState = { buildJsonObject { put("prCount", bitbucketHolder.state.prs.size) } },
+                    reset = { bitbucketHolder.state = BitbucketDataFactory.createDefaultState() },
+                    loadScenario = { name ->
+                        when (name) {
+                            "default" -> { bitbucketHolder.state = BitbucketDataFactory.createDefaultState(); true }
+                            "all-merged" -> { bitbucketHolder.state = BitbucketDataFactory.createAllMergedState(); true }
+                            "empty" -> { bitbucketHolder.state = BitbucketDataFactory.createEmptyState(); true }
+                            "happy-path" -> { bitbucketHolder.state = BitbucketDataFactory.createHappyPathState(); true }
+                            else -> false
+                        }
+                    },
+                    scenarios = BITBUCKET_SCENARIOS,
+                )
+            },
+            launch(Dispatchers.IO) {
+                startMockServer("Sourcegraph", config.sourcegraphPort, sourcegraphChaos, sourcegraphAdmin,
+                    routeSetup = { routing {
+                        sourcegraphRoutes(sourcegraphState)
+                        // Dynamic custom-scenario authoring (cowork POSTs a JSON turn-sequence → mock plays it back).
+                        // Mounted under /__admin so the shared AuthPlugin exempts it (no token needed).
+                        post("/__admin/sourcegraph/scenario/custom") {
+                            when (val r = sourcegraphState.registerCustomScenario(call.receiveText())) {
+                                is SourcegraphState.RegisterResult.Ok ->
+                                    call.respondText(
+                                        """{"message":"registered+activated '${r.name}' (${r.turnCount} turns)"}""",
+                                        ContentType.Application.Json
+                                    )
+                                is SourcegraphState.RegisterResult.Error ->
+                                    call.respondText(
+                                        """{"error":"${r.message}"}""",
+                                        ContentType.Application.Json,
+                                        HttpStatusCode.BadRequest
+                                    )
+                            }
+                        }
+                    } },
+                    getState = { sourcegraphState.stateSummary() },
+                    reset = { sourcegraphState.resetTurnIndices() },
+                    loadScenario = { name -> sourcegraphState.setDefaultScenario(name) },
+                    scenarios = sourcegraphState.listScenarios(),
                 )
             },
         )
@@ -164,9 +222,11 @@ private fun printBanner(config: MockConfig) {
         |╔══════════════════════════════════════════════════╗
         |║          Workflow Orchestrator Mock Server        ║
         |╠══════════════════════════════════════════════════╣
-        |║  Jira      → http://localhost:${config.jiraPort.toString().padEnd(18)}║
-        |║  Bamboo    → http://localhost:${config.bambooPort.toString().padEnd(18)}║
-        |║  SonarQube → http://localhost:${config.sonarPort.toString().padEnd(18)}║
+        |║  Jira        → http://localhost:${config.jiraPort.toString().padEnd(16)}║
+        |║  Bamboo      → http://localhost:${config.bambooPort.toString().padEnd(16)}║
+        |║  SonarQube   → http://localhost:${config.sonarPort.toString().padEnd(16)}║
+        |║  Bitbucket   → http://localhost:${config.bitbucketPort.toString().padEnd(16)}║
+        |║  Sourcegraph → http://localhost:${config.sourcegraphPort.toString().padEnd(16)}║
         |║                                                  ║
         |║  Chaos mode: OFF (enable via /__admin/chaos)     ║
         |║  Scenario:   default (adversarial)               ║
