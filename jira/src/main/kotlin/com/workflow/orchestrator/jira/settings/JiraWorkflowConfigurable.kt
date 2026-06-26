@@ -51,9 +51,11 @@ private data class JiraCustomFieldItem(val data: JiraFieldData) {
  *  3. Workflow Transitions (10 intent -> transition name mappings)
  *  4. Branching (branch pattern + conventional commits)
  *  5. Pull Requests (title format, reviewers, AI review max diff lines)
- *  6. Time Tracking (collapsed, max hours, increment, auto-transition)
- *  7. Jira Custom Fields (collapsed, epic link / reviewer / tester field IDs)
- *  8. Advanced (collapsed, max branch name length, max PR title length, ticket key regex)
+ *  6. Commit Messages (AI commit message format: conventional / plain)
+ *  7. Ticket Transitions (start-work / PR-create target statuses, post-commit trigger statuses)
+ *  8. Time Tracking (collapsed, max hours, increment, auto-transition)
+ *  9. Jira Custom Fields (collapsed, epic link / reviewer / tester field IDs)
+ * 10. Advanced (collapsed, max branch name length, max PR title length, ticket key regex)
  *
  * Transition guards (build-passed, copyright, coverage, automation) are intentionally
  * removed as part of the settings UX redesign — those checkboxes were orphaned.
@@ -284,7 +286,22 @@ class JiraWorkflowConfigurable(private val project: Project) : SearchableConfigu
                 }
             }
 
-            // === 6. Ticket Transitions ===
+            // === 6. Commit Messages ===
+            group("Commit Messages") {
+                row("AI commit message format:") {
+                    comboBox(listOf("conventional", "plain"))
+                        .bindItem(
+                            { settings.state.commitMessageFormat ?: "conventional" },
+                            { settings.state.commitMessageFormat = it ?: "conventional" }
+                        )
+                        .comment(
+                            "conventional = Conventional Commits (type(scope): summary, issue-type aware). " +
+                                "plain = concise imperative summary with no type prefix."
+                        )
+                }
+            }
+
+            // === 7. Ticket Transitions ===
             group("Ticket Transitions") {
                 row("Start Work target status:") {
                     textField()
@@ -328,7 +345,7 @@ class JiraWorkflowConfigurable(private val project: Project) : SearchableConfigu
                 }
             }
 
-            // === 7. Time Tracking (collapsed by default) ===
+            // === 8. Time Tracking (collapsed by default) ===
             collapsibleGroup("Time Tracking") {
                 row("Max hours per worklog:") {
                     textField()
@@ -351,7 +368,7 @@ class JiraWorkflowConfigurable(private val project: Project) : SearchableConfigu
                 }
             }.expanded = false
 
-            // === 8. Jira Custom Fields (collapsed by default) ===
+            // === 9. Jira Custom Fields (collapsed by default) ===
             collapsibleGroup("Jira Custom Fields (Advanced)") {
                 // Combo + manual-ID fallback for Epic Link.
                 val epicCombo = ComboBox<JiraCustomFieldItem>().apply {
@@ -409,7 +426,7 @@ class JiraWorkflowConfigurable(private val project: Project) : SearchableConfigu
                 }
             }.expanded = false
 
-            // === 9. Advanced (collapsed by default) ===
+            // === 10. Advanced (collapsed by default) ===
             collapsibleGroup("Advanced") {
                 row("Max branch name length:") {
                     intTextField(range = 10..200)
