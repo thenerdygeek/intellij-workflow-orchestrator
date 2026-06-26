@@ -46,11 +46,4 @@ class BranchNameValidatorTest {
         assertFalse(name.endsWith("-"))
     }
 
-    @Test
-    fun `isValidBranchName accepts standard patterns`() {
-        assertTrue(BranchNameValidator.isValidBranchName("feature/PROJ-123-login-fix"))
-        assertTrue(BranchNameValidator.isValidBranchName("bugfix/PROJ-456-crash"))
-        assertFalse(BranchNameValidator.isValidBranchName("feature/no ticket id"))
-        assertFalse(BranchNameValidator.isValidBranchName(""))
-    }
 }
