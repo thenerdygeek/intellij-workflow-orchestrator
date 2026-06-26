@@ -227,6 +227,12 @@ sealed class WorkflowEvent {
         val snapshot: List<MonitorSnapshotDto>,
     ) : WorkflowEvent()
 
+    /**
+     * A tool-window tab's availability changed (e.g. an async capability probe resolved).
+     * The tool-window factory rebuilds its tabs in response. tabTitle is advisory.
+     */
+    data class TabAvailabilityChanged(val tabTitle: String) : WorkflowEvent()
+
     enum class BuildEventStatus { SUCCESS, FAILED }
 }
 

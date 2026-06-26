@@ -35,6 +35,13 @@ import javax.swing.SwingConstants
 
 class WorkflowToolWindowFactory : ToolWindowFactory, DumbAware {
 
+    companion object {
+        /** A default tab with no provider stays visible; otherwise honor the provider's isAvailable. */
+        @JvmStatic
+        fun isTabAvailable(provider: WorkflowTabProvider?, project: Project): Boolean =
+            provider?.isAvailable(project) ?: true
+    }
+
     private val log = Logger.getInstance(WorkflowToolWindowFactory::class.java)
 
     override fun createToolWindowContent(project: Project, toolWindow: ToolWindow) {
@@ -55,7 +62,33 @@ class WorkflowToolWindowFactory : ToolWindowFactory, DumbAware {
             }
         }
 
-        rebuildTabs()
+        // Rebuild tabs when a tab's availability is resolved asynchronously
+        // (e.g. the Jira-Agile capability probe completes -> hide/show Sprint).
+        // Registered BEFORE the first rebuildTabs() so the replay=0 EventBus can't
+        // drop a probe result emitted during that first build.
+        val availabilityScope = CoroutineScope(SupervisorJob() + Dispatchers.EDT)
+        availabilityScope.launch {
+            project.getService(com.workflow.orchestrator.core.events.EventBus::class.java)
+                .events
+                .collect { event ->
+                    if (event is com.workflow.orchestrator.core.events.WorkflowEvent.TabAvailabilityChanged) {
+                        val cm = toolWindow.contentManager
+                        val selectedTab = cm.selectedContent?.displayName
+                        rebuildTabs()
+                        // Restore the previous selection if it still exists; otherwise select
+                        // the first surviving content so we never sit on a removed/blank tab.
+                        val restored = selectedTab?.let { prev -> cm.contents.firstOrNull { it.displayName == prev } }
+                        if (restored != null) {
+                            cm.setSelectedContent(restored)
+                        } else {
+                            cm.contents.firstOrNull()?.let { cm.setSelectedContent(it) }
+                        }
+                    }
+                }
+        }
+        com.intellij.openapi.util.Disposer.register(toolWindow.disposable) { availabilityScope.cancel() }
+
+        rebuildTabs() // first build — collector above is already live
 
         // Listen for tab selection to materialize lazy tabs on demand.
         // Registered exactly ONCE per ToolWindow (P0-6): buildTabs() is re-run by
@@ -356,22 +389,19 @@ class WorkflowToolWindowFactory : ToolWindowFactory, DumbAware {
 
         val providers = currentProviders()
 
-        // Add default tabs (matched with providers by title)
-        defaultTabs.forEach { tab ->
-            val isFirstTab = tab.order == 0
-            val panel = if (isFirstTab) {
-                // Eagerly create the first/default tab so the user sees content immediately
+        // Add default tabs (matched with providers by title). Hide any whose provider
+        // reports unavailable (e.g. Sprint on non-Software Jira), and eagerly materialize
+        // the FIRST VISIBLE tab so the tool window never opens on a perpetual "Loading…"
+        // placeholder when the natural first tab (Sprint, order 0) is hidden.
+        val visibleDefaults = defaultTabs.filter { isTabAvailable(providers[it.title], project) }
+        visibleDefaults.forEachIndexed { index, tab ->
+            val panel = if (index == 0) {
                 materializeTab(project, tab, providers, materializedTabs)
             } else {
-                // Lightweight placeholder -- real panel created on first selection
                 LazyTabPlaceholder()
             }
             val content = ContentFactory.getInstance().createContent(panel, tab.title, false)
             content.isCloseable = false
-            // Cascade Content.dispose() -> panel.dispose() so panel-owned CoroutineScopes/
-            // subscribers are released when the tool window (or the whole project) closes.
-            // The placeholder isn't Disposable, so this is a no-op for lazy tabs here;
-            // the real panel is wired in the selectionChanged listener.
             if (panel is Disposable) {
                 content.setDisposer(panel)
             }
@@ -384,7 +414,7 @@ class WorkflowToolWindowFactory : ToolWindowFactory, DumbAware {
         // Chromium process must not spawn just because the tool window opened on
         // the Sprint tab.
         val defaultTitles = defaultTabs.map { it.title }.toSet()
-        providers.filter { it.key !in defaultTitles }
+        providers.filter { it.key !in defaultTitles && it.value.isAvailable(project) }
             .values
             .sortedBy { it.order }
             .forEach { provider ->
