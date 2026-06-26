@@ -127,6 +127,28 @@ class BaseUrlValidatorTest {
         assertNotInvalid(BaseUrlValidator.validate("https://bamboo.corp.example/bamboo/"))
     }
 
+    // ── Dev/test escape hatch (sandbox-only) ───────────────────────────────────
+
+    @Test fun `localhost is still rejected when the escape-hatch property is off`() {
+        System.clearProperty(BaseUrlValidator.ALLOW_PRIVATE_URLS_PROPERTY)
+        assertInvalid(BaseUrlValidator.validate("http://localhost:8088"))
+        assertInvalid(BaseUrlValidator.validate("http://127.0.0.1:8480"))
+    }
+
+    @Test fun `escape hatch allows localhost and private hosts only when property is true`() {
+        try {
+            System.setProperty(BaseUrlValidator.ALLOW_PRIVATE_URLS_PROPERTY, "true")
+            assertTrue(BaseUrlValidator.validate("http://localhost:8088") is ValidationResult.Valid)
+            assertTrue(BaseUrlValidator.validate("http://127.0.0.1:8480") is ValidationResult.Valid)
+            assertTrue(BaseUrlValidator.validate("http://10.0.0.5:9000") is ValidationResult.Valid)
+            // Scheme + host-present guards still apply even with the hatch on:
+            assertInvalid(BaseUrlValidator.validate("file:///etc/passwd"))
+            assertInvalid(BaseUrlValidator.validate("http://"))
+        } finally {
+            System.clearProperty(BaseUrlValidator.ALLOW_PRIVATE_URLS_PROPERTY)
+        }
+    }
+
     // ── Helpers ────────────────────────────────────────────────────────────────
 
     private fun assertInvalid(result: ValidationResult) {

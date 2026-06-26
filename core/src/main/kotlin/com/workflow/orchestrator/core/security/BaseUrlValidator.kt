@@ -76,6 +76,13 @@ object BaseUrlValidator {
         }
         val host = rawHost.lowercase().removePrefix("[").removeSuffix("]")
 
+        // ── Dev/test escape hatch ────────────────────────────────────────────────
+        // The runIde sandbox sets `-Dworkflow.orchestrator.allowPrivateUrls=true` so a developer can
+        // point the plugin at a LOCALHOST mock server (the :mock-server module) without tripping the
+        // SSRF guard. The shipped plugin NEVER sets this property, so production keeps full loopback/
+        // private-address protection. Scheme + host-present checks above still apply.
+        if (allowPrivateUrls()) return ValidationResult.Valid
+
         // ── 4. Literal host quick-reject (avoids DNS for known-bad patterns) ─────
         literalBlockedReason(host)?.let { reason ->
             return ValidationResult.Invalid(reason)
@@ -107,6 +114,13 @@ object BaseUrlValidator {
     }
 
     // ── Internals ────────────────────────────────────────────────────────────────
+
+    /** System-property name for the dev/test escape hatch (set ONLY by the runIde sandbox). */
+    const val ALLOW_PRIVATE_URLS_PROPERTY = "workflow.orchestrator.allowPrivateUrls"
+
+    /** True only when the dev/test escape-hatch system property is explicitly "true". */
+    private fun allowPrivateUrls(): Boolean =
+        System.getProperty(ALLOW_PRIVATE_URLS_PROPERTY) == "true"
 
     private val ALLOWED_SCHEMES = setOf("http", "https")
 

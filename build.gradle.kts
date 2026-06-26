@@ -323,6 +323,17 @@ intellijPlatform {
     }
 }
 
+// ---- Dev sandbox: allow localhost mock server ----
+// Lets the runIde sandbox point the plugin at a LOCALHOST mock server (the :mock-server module).
+// BaseUrlValidator's SSRF guard otherwise rejects localhost / 127.0.0.1 / private-LAN URLs; this
+// system property flips that guard's dev-only escape hatch ON. Sandbox-only — the shipped plugin
+// never sets it, so production keeps full SSRF protection.
+tasks.withType<org.jetbrains.intellij.platform.gradle.tasks.RunIdeTask>().configureEach {
+    jvmArgumentProviders += CommandLineArgumentProvider {
+        listOf("-Dworkflow.orchestrator.allowPrivateUrls=true")
+    }
+}
+
 // ---- UI Tests (Remote Robot) ----
 // Two-task flow (IntelliJ Platform Gradle Plugin 2.x — `runIdeForUiTests` is NOT a built-in here):
 //   1. `./gradlew runIdeForUiTests`  — launches the sandbox IDE with the Robot Server plugin
