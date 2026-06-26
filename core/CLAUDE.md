@@ -15,6 +15,10 @@ Shared infrastructure for all feature modules. No feature module imports another
 - `PullRequestCreated` / `PullRequestMerged` / `PullRequestDeclined` / `PullRequestApproved` / `PrSelected` — PR lifecycle
 - `TicketDetected` — ticket detected from branch but dismissed (shows banner in Sprint tab)
 - `JiraCommentPosted` — handover event
+- `TabAvailabilityChanged(tabTitle)` — requests a tool-window tab rebuild; `WorkflowToolWindowFactory`
+  filters tabs via `WorkflowTabProvider.isAvailable(project): Boolean = true` (default shown) and
+  eager-materializes the first visible tab. Emit ONLY when a tab should be hidden (a `true` verdict
+  is already reflected by the fail-open default and does not need a rebuild).
 
 ## ToolResult<T>
 
@@ -68,6 +72,13 @@ Activity-aware polling: `baseIntervalMs` (default 30s), `maxIntervalMs` (default
 **Do not rename this id.** It is the unique identifier that Platform uses for the group node AND the parent lookup for any contributing plugin. Renaming it silently orphans every B-contributed page (they fall back to "Other Settings" without any error).
 
 Pinned by `SettingsAnchorContractTest` (`:konsist`) — the test asserts that `WorkflowSettingsConfigurable` carries `id = "workflow.orchestrator"` in A's `plugin.xml` registration. Keep the test and the id in sync if the configurable is ever restructured.
+
+### Commit message format
+
+- `PluginSettings.commitMessageFormat` (`"conventional"` | `"plain"`, default `"conventional"`) — selects
+  the AI commit-message style. `"conventional"` produces Conventional-Commits prefixed messages with
+  ticket ID and type mapping; `"plain"` produces a bare imperative summary with no type prefix and no
+  ticket context injected. Surfaced in Settings → Workflow Orchestrator → the Jira workflow page's "Commit Messages" group.
 
 ### Sub-agent settings
 
@@ -186,6 +197,13 @@ JBColor constants with light/dark variants: SUCCESS (green), ERROR (red), WARNIN
 
 `core/util/TicketKeyExtractor.kt` — canonical regex helper for extracting ticket keys. `extractFromBranch(branchName)` returns the first match; `isValidKey(key)` validates exact format. Pattern: `[A-Z][A-Z0-9]+-\d+` (e.g., `AFTER8TE-912`).
 
+## PsiContextEnricher
+
+`core/psi/PsiContextEnricher.kt` — enriches LLM context with PSI-derived metadata (module, language,
+framework hints). Phase 1c: falls back to `ModuleUtilCore.findModuleForFile(vFile, project)` when the
+primary discovery path yields nothing; the enriched field is `moduleName` (was `mavenModule` before
+Phase 1a de-convention).
+
 ## Services
 
 - `TicketTransitionService` — unified Jira transition orchestrator. Always fetches
@@ -233,6 +251,8 @@ shape-reservation only (no consumer/registration yet — like `NativeProtocol` p
   `MULTIPLE_DEFAULTS_INHERITED_FROM_SUPERTYPES` when `BitbucketServiceImpl` inherits from both
   `BitbucketService` (which has the defaults) and `VcsHostClient`; every existing call site passes
   args explicitly, so this is behavior-neutral.
+  Phase 1c adds `getDefaultBranch(repoName)` and `getDefaultReviewersForBranch(sourceBranch,
+  targetBranch, repoName)` as shape-reservations (no consumer yet).
 - `core/services/CiService.kt` — neutral CI ops (build/trigger/log/test/pipeline list). Implemented by
   `BambooServiceImpl` (`:bamboo`) alongside `BambooService` via 7 explicit delegating methods (11 of 18 bind "for free" via identical JVM signatures).
   Neutral DTOs `PipelineData`/`CiGroupData` (`core/model/CiModels.kt`) replace `PlanData`/`ProjectData`;

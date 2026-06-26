@@ -32,8 +32,10 @@ typealias VcsUserData = BitbucketUserData
  *  - `getLinkedJiraIssues` / `getRequiredBuilds` are intentionally NOT here — they are vendor-coupled
  *    (Bitbucket↔Jira link plugin; required-builds conditions keyed by Bamboo plan keys) and remain
  *    on [BitbucketService].
- *  - Default-branch resolution is not yet on this seam: it lives on the lower `BitbucketBranchClient`
- *    and `DefaultBranchResolver`; threading it through a neutral op is a Phase-1 (de-convention) task.
+ *  - Default-branch resolution is now on this seam: `getDefaultBranch(repoName)` and
+ *    `getDefaultReviewersForBranch(sourceBranch, targetBranch, repoName)` were added in Phase 1c as
+ *    shape-reservations (no consumer resolves `VcsHostClient` yet). `BitbucketBranchClient` /
+ *    `DefaultBranchResolver` remain the underlying implementations.
  *  - PR-state vocabulary: a GitHub/GitLab adapter maps its `closed` to Bitbucket's `DECLINED`.
  *  - [getBuildStatuses] / [getCommitBuildStats] read the VCS HOST's commit build-status store
  *    (e.g. Bitbucket's `/rest/build-status/...` endpoints), NOT the CI server — they answer "what

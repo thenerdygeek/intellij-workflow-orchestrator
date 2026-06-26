@@ -53,7 +53,7 @@ Output ONLY the raw commit message. No commentary, no markdown code blocks, no e
             CommitMessageFormat.CONVENTIONAL ->
                 buildConventionalUserMessage(diff, ticketId, filesSummary, recentCommits, codeContext, candidateTickets)
             CommitMessageFormat.PLAIN ->
-                buildPlainUserMessage(diff, ticketId, filesSummary, recentCommits, codeContext, candidateTickets)
+                buildPlainUserMessage(diff, filesSummary, recentCommits, codeContext)
         }
         return listOf(
             ChatMessage(role = "system", content = systemMessage),
@@ -170,11 +170,9 @@ Output ONLY the raw commit message. No commentary, no markdown code blocks, no e
 
     private fun buildPlainUserMessage(
         diff: String,
-        ticketId: String,
         filesSummary: String,
         recentCommits: List<String>,
         codeContext: String,
-        candidateTickets: List<TicketCandidate>
     ): String = buildString {
         appendLine("Generate a commit message for these changes.")
         appendLine()
@@ -189,11 +187,6 @@ Output ONLY the raw commit message. No commentary, no markdown code blocks, no e
         appendLine("- Do NOT use a Conventional-Commits type prefix such as 'feat:' or 'fix:'")
         appendLine("- Body explains WHY the change was made, not just what lines changed")
         appendLine("- AVOID: passive voice, 'This commit/change' phrasing")
-        if (ticketId.isNotBlank() || candidateTickets.isNotEmpty()) {
-            appendLine(
-                "- You MAY reference the ticket if it clarifies the change, but do not force any prefix format."
-            )
-        }
         appendLine()
         appendContextAndDiff(recentCommits, codeContext, filesSummary, diff, "the FORMAT/RULES above are authoritative")
     }

@@ -63,7 +63,9 @@ class JiraAgileCapabilityService(
                     verdict = result
                     probedUrl = url
                     log.info("[Jira:Agile] Agile capability for '$url' = $result")
-                    project.service<EventBus>().emit(WorkflowEvent.TabAvailabilityChanged("Sprint"))
+                    if (result == false) { // true never changes visibility (fail-open already shows the tab)
+                        project.service<EventBus>().emit(WorkflowEvent.TabAvailabilityChanged("Sprint"))
+                    }
                 } else {
                     log.debug("[Jira:Agile] Agile probe inconclusive for '$url' (transient); will retry")
                 }

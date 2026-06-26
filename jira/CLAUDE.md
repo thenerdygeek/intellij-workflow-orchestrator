@@ -38,6 +38,12 @@ Server quirk: `/rest/api/2/user/search` requires `username=` (NOT `query=` — C
 - `ActiveTicketService` — tracks current ticket, emits `TicketChanged` events
 - `BranchingService` — Start Work flow: creates branch on Bitbucket + transitions Jira ticket. PSI/VFS reads use `readAction { }` (see `:core` "Service & threading conventions").
 - `BranchChangeTicketDetector` — detects ticket from branch name on branch switch, shows confirmation popup (dismissed branches tracked in-memory)
+- `JiraAgileCapabilityService` (project `@Service`) — probes `GET /rest/agile/1.0/board` async on first
+  `agileAvailableOrProbe()` call; caches a tri-state verdict per Jira URL (`true` = agile available,
+  `false` = 404/unavailable → hide Sprint tab, `null` = transient/unknown → show). Emits
+  `WorkflowEvent.TabAvailabilityChanged("Sprint")` ONLY on a definitive `false` verdict (a `true`
+  verdict does not rebuild tabs — fail-open already shows the tab). `SprintTabProvider.isAvailable`
+  returns `false` (hide) only when the cached verdict is definitively `false`.
 
 Phase 4 survivor RESOLVED (P2-20, 2026-06-10 perf audit): `CurrentWorkSection.showBranchPicker` no longer runs `runReadAction { }` on the EDT — the git read happens in `scope.launch` off-EDT, then the popup is built back on the EDT behind an `editTargetLabel.isShowing` guard (the click→popup path is async; the ticket may clear mid-flight). The `editTargetLabel` mouse listener is registered once in `init`, not re-added per `buildActiveState`.
 
