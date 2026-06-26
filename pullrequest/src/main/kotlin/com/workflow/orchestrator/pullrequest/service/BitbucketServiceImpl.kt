@@ -8,6 +8,7 @@ import com.workflow.orchestrator.core.bitbucket.BitbucketPrCommentResponse
 import com.workflow.orchestrator.core.bitbucket.BitbucketPrReviewerRef
 import com.workflow.orchestrator.core.bitbucket.BitbucketPrUpdateRequest
 import com.workflow.orchestrator.core.bitbucket.BitbucketReviewerUser
+import com.workflow.orchestrator.core.bitbucket.RepoCoords
 import com.workflow.orchestrator.core.model.ApiResult
 import com.workflow.orchestrator.core.model.PrComment
 import com.workflow.orchestrator.core.model.PrCommentAnchor
@@ -416,6 +417,73 @@ class BitbucketServiceImpl(private val project: Project) : BitbucketService, Vcs
                 ToolResult(data = BranchData(id = "", displayId = name, latestCommit = null),
                     summary = "Error creating branch '$name': ${result.message}", isError = true,
                     hint = "Check the start point is a valid commit or branch name.")
+            }
+        }
+    }
+
+    override suspend fun getDefaultBranch(repoName: String?): ToolResult<BranchData> {
+        val api = client ?: return ToolResult(
+            data = BranchData(id = "", displayId = "", latestCommit = null),
+            summary = "Bitbucket not configured. Cannot fetch default branch.",
+            isError = true, hint = "Set up Bitbucket connection in Settings."
+        )
+        val (projectKey, repoSlug) = resolveRepo(repoName) ?: return ToolResult(
+            data = BranchData(id = "", displayId = "", latestCommit = null),
+            summary = "Bitbucket project/repo not configured.", isError = true,
+            hint = "Set Bitbucket project key and repo slug in Settings."
+        )
+        return when (val result = api.getDefaultBranch(projectKey, repoSlug)) {
+            is ApiResult.Success -> {
+                val b = result.data
+                ToolResult.success(
+                    BranchData(id = b.id, displayId = b.displayId, latestCommit = b.latestCommit, isDefault = b.isDefault),
+                    "Default branch is '${b.displayId}'"
+                )
+            }
+            is ApiResult.Error -> {
+                log.warn("[BitbucketService] Failed to fetch default branch: ${result.message}")
+                ToolResult(
+                    data = BranchData(id = "", displayId = "", latestCommit = null),
+                    summary = "Error fetching default branch: ${result.message}",
+                    isError = true,
+                    hint = "Check Bitbucket connection in Settings."
+                )
+            }
+        }
+    }
+
+    override suspend fun getDefaultReviewersForBranch(
+        sourceBranch: String,
+        targetBranch: String,
+        repoName: String?
+    ): ToolResult<List<BitbucketUserData>> {
+        val api = client ?: return ToolResult(
+            data = emptyList(), summary = "Bitbucket not configured. Cannot fetch default reviewers.",
+            isError = true, hint = "Set up Bitbucket connection in Settings."
+        )
+        val (projectKey, repoSlug) = resolveRepo(repoName) ?: return ToolResult(
+            data = emptyList(), summary = "Bitbucket project/repo not configured.", isError = true,
+            hint = "Set Bitbucket project key and repo slug in Settings."
+        )
+        return when (val result = api.getDefaultReviewersForBranch(
+            RepoCoords(projectKey, repoSlug),
+            sourceBranch,
+            targetBranch,
+        )) {
+            is ApiResult.Success -> {
+                val users = result.data.map { u ->
+                    BitbucketUserData(name = u.name, displayName = u.displayName, emailAddress = u.emailAddress)
+                }
+                ToolResult.success(users, "Found ${users.size} default reviewer(s) for $sourceBranch → $targetBranch")
+            }
+            is ApiResult.Error -> {
+                log.warn("[BitbucketService] Failed to fetch default reviewers: ${result.message}")
+                ToolResult(
+                    data = emptyList(),
+                    summary = "Error fetching default reviewers: ${result.message}",
+                    isError = true,
+                    hint = "Check Bitbucket connection in Settings."
+                )
             }
         }
     }

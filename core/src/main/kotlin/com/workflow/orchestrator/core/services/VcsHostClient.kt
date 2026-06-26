@@ -87,6 +87,23 @@ interface VcsHostClient {
 
     suspend fun createBranch(name: String, startPoint: String, repoName: String?): ToolResult<BranchData>
 
+    /**
+     * The repository's configured default branch. Neutral over VCS host.
+     * Shape-reservation (Phase 1c): no consumer resolves VcsHostClient yet.
+     * NO default param value — see the MULTIPLE_DEFAULTS note at the top of this file.
+     */
+    suspend fun getDefaultBranch(repoName: String?): ToolResult<BranchData>
+
+    /**
+     * Default reviewers that apply to a sourceBranch -> targetBranch pair.
+     * Neutral over VCS host. Shape-reservation (Phase 1c).
+     */
+    suspend fun getDefaultReviewersForBranch(
+        sourceBranch: String,
+        targetBranch: String,
+        repoName: String?
+    ): ToolResult<List<VcsUserData>>
+
     suspend fun searchUsers(filter: String, repoName: String?): ToolResult<List<VcsUserData>>
 
     suspend fun getPullRequestsForBranch(branchName: String, repoName: String?): ToolResult<List<PullRequestData>>
