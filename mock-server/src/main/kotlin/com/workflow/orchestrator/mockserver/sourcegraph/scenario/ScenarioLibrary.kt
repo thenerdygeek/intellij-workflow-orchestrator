@@ -1,6 +1,7 @@
 package com.workflow.orchestrator.mockserver.sourcegraph.scenario
 
 import com.workflow.orchestrator.mockserver.sourcegraph.scenario.Turn.Companion.FINISH_LENGTH
+import com.workflow.orchestrator.mockserver.sourcegraph.scenario.Turn.Companion.FINISH_STOP
 import com.workflow.orchestrator.mockserver.sourcegraph.scenario.Turn.Companion.FINISH_TOOL_CALLS
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
@@ -207,37 +208,48 @@ class ScenarioLibrary(initial: List<Scenario> = bundled()) {
             ),
         )
 
-        // ── plan-mode ───────────────────────────────────────────────────────────────
+        // ── plan-mode (engages the Approve gate) ────────────────────────────────────
+        // Turn 1 enters plan mode AND presents the plan in ONE assistant turn. With
+        // needs_more_exploration=false, AgentLoop's PlanResponse branch calls userInputChannel.receive()
+        // and SUSPENDS — the plan card renders and the loop waits for the user to click Approve. There is
+        // deliberately NO attempt_completion here, so the loop does NOT auto-terminate. finishReason is
+        // "stop" (the client promotes it to tool_calls because tool calls are present, so the tools still
+        // dispatch). Turn 2 is consumed only AFTER the user Approves and the loop resumes in ACT mode.
         private fun planMode() = Scenario(
             "plan-mode",
             listOf(
                 Turn(
-                    thinking = "This change spans several files; I should lay out a plan before editing.",
-                    textChunks = listOf("This looks like it touches a few files. Let me switch to plan mode."),
+                    thinking = "This change spans a few files. I'll switch to plan mode and present a plan for approval.",
+                    textChunks = listOf(
+                        "This touches a few files — let me put together a plan for you to review before I edit anything.",
+                    ),
                     toolCalls = listOf(
                         ScenarioToolCall(
                             "enable_plan_mode",
-                            """{"reason":"The change spans several files; let me lay out a plan before editing."}""",
+                            """{"reason":"The change spans several files; let me present a plan before editing."}""",
                         ),
-                    ),
-                    finishReason = FINISH_TOOL_CALLS,
-                    usage = TurnUsage(1100, 60),
-                ),
-                Turn(
-                    textChunks = listOf("Here's my proposed plan."),
-                    toolCalls = listOf(
                         ScenarioToolCall(
                             "plan_mode_respond",
-                            """{"response":"## Plan\n\n1. Add a configuration flag.\n2. Wire it into the service layer.\n3. Add a unit test.\n\nApprove to start implementing.","needs_more_exploration":"false"}""",
+                            """{"response":"## Plan\n\n### Task 1: Add a feature flag\n- File: `scratch/feature-config.txt`\n- Introduce `feature.enabled`.\n\n### Task 2: Wire it into the service\n- Read the flag at startup.\n\n### Task 3: Add a test\n- Cover both flag states.\n\nApprove to start implementing.","needs_more_exploration":false}""",
+                        ),
+                    ),
+                    finishReason = FINISH_STOP,
+                    usage = TurnUsage(1300, 180),
+                ),
+                Turn(
+                    textChunks = listOf("Plan approved — implementing the first step now."),
+                    toolCalls = listOf(
+                        ScenarioToolCall(
+                            "create_file",
+                            """{"path":"scratch/feature-config.txt","content":"feature.enabled=true\n","description":"Create the feature config per the approved plan"}""",
+                        ),
+                        ScenarioToolCall(
+                            "attempt_completion",
+                            """{"kind":"done","result":"Implemented the approved plan: created scratch/feature-config.txt with the feature flag enabled."}""",
                         ),
                     ),
                     finishReason = FINISH_TOOL_CALLS,
-                    usage = TurnUsage(1400, 150),
-                ),
-                complete(
-                    "Plan presented and approved; ready to implement the three steps.",
-                    prompt = 1700,
-                    completion = 80,
+                    usage = TurnUsage(1700, 120),
                 ),
             ),
         )

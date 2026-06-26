@@ -166,6 +166,27 @@ class ScenarioEngineTest {
         assertTrue(library.byName("compaction")!!.turns[0].usage.promptTokens >= 116_000)
     }
 
+    @Test
+    fun `plan-mode turn 1 presents a plan and does not auto-terminate`() {
+        val library = ScenarioLibrary()
+        val plan = library.byName("plan-mode")!!
+        assertEquals(2, plan.turns.size, "plan-mode is two turns: present-plan then post-approve act")
+
+        val turn1 = plan.turns[0]
+        // Must NOT auto-terminate — no attempt_completion in the plan-presentation turn.
+        assertFalse(turn1.toolCalls.any { it.name == "attempt_completion" })
+        // Enters plan mode AND presents the plan; needs_more_exploration=false → AgentLoop suspends.
+        assertTrue(turn1.toolCalls.any { it.name == "enable_plan_mode" })
+        val planRespond = turn1.toolCalls.single { it.name == "plan_mode_respond" }
+        assertTrue(planRespond.argumentsJson.contains("\"needs_more_exploration\":false"))
+        assertEquals(Turn.FINISH_STOP, turn1.finishReason)
+
+        // Turn 2 (consumed only after Approve) carries the act tool + the terminal attempt_completion.
+        val turn2 = plan.turns[1]
+        assertTrue(turn2.toolCalls.any { it.name == "create_file" })
+        assertTrue(turn2.toolCalls.any { it.name == "attempt_completion" })
+    }
+
     // ── Dynamic custom scenarios ────────────────────────────────────────────────────
 
     @Test

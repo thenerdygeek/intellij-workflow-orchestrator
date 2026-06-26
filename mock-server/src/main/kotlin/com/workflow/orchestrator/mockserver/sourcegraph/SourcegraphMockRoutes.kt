@@ -49,12 +49,25 @@ fun Route.sourcegraphRoutes(state: SourcegraphState) {
         call.respondText(supportedModelsJson(), ContentType.Application.Json)
     }
 
-    // POST /.api/llm/chat/completions — OpenAI-compatible streaming completion.
+    // POST /.api/llm/chat/completions — OpenAI-compatible completion.
+    //   stream:true  → SSE of the active scenario's next Turn (advances the turn index).
+    //   stream:false → SINGLE non-streaming chat.completion JSON, canned message, NO turn advancement.
+    //                  (The plugin's out-of-band title/branch generation uses this path — REQ-2.)
     post("/.api/llm/chat/completions") {
         val body = parseBody(call.receiveText())
+        val id = "chatcmpl-mock-${System.nanoTime()}"
+
+        if (!isStreaming(body)) {
+            // Out-of-band side request: respond with a single JSON object and do NOT touch the engine.
+            call.respondText(
+                OpenAiNonStreamingSerializer.serialize(model = MOCK_MODEL_ID, id = id),
+                ContentType.Application.Json,
+            )
+            return@post
+        }
+
         val messages = parseOpenAiMessages(body)
         val turn = state.engine.nextTurn(messages)
-        val id = "chatcmpl-mock-${System.nanoTime()}"
         call.respondTextWriter(ContentType.Text.EventStream, HttpStatusCode.OK) {
             OpenAiSseSerializer.frames(turn, MOCK_MODEL_ID, id).forEach { frame ->
                 write(frame)
@@ -85,6 +98,16 @@ private val LENIENT_JSON = Json { ignoreUnknownKeys = true; isLenient = true }
 
 private fun parseBody(raw: String): JsonObject =
     runCatching { LENIENT_JSON.parseToJsonElement(raw).jsonObject }.getOrDefault(JsonObject(emptyMap()))
+
+/**
+ * Streaming iff the request body has `"stream": true` (JSON boolean, or the string "true" defensively).
+ * `false` or absent → non-streaming (REQ-2). The agent's main loop sends `stream:true`; out-of-band
+ * title/branch generation sends `stream:false`.
+ */
+private fun isStreaming(body: JsonObject): Boolean {
+    val prim = body["stream"]?.jsonPrimitive ?: return false
+    return prim.booleanOrNull ?: prim.contentOrNull?.equals("true", ignoreCase = true) ?: false
+}
 
 /** Normalize an OpenAI request body's `messages:[{role,content}]` into [EngineMessage]s. */
 private fun parseOpenAiMessages(body: JsonObject): List<EngineMessage> =

@@ -10,6 +10,7 @@ import io.ktor.server.routing.*
 import io.ktor.server.testing.*
 import kotlinx.serialization.json.*
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
@@ -109,7 +110,7 @@ class SourcegraphMockRoutesTest {
         // Turn 0 → read_file; the conversation key is the (stable) first user message.
         val first = client.post("/.api/llm/chat/completions") {
             contentType(ContentType.Application.Json)
-            setBody("""{"messages":[{"role":"user","content":"[read-and-finish] review"}]}""")
+            setBody("""{"stream":true,"messages":[{"role":"user","content":"[read-and-finish] review"}]}""")
         }.bodyAsText()
         assertTrue(first.contains("<read_file>"))
 
@@ -117,7 +118,7 @@ class SourcegraphMockRoutesTest {
         val second = client.post("/.api/llm/chat/completions") {
             contentType(ContentType.Application.Json)
             setBody(
-                """{"messages":[{"role":"user","content":"[read-and-finish] review"},{"role":"assistant","content":"<read_file>...</read_file>"},{"role":"user","content":"RESULT of read_file: contents"}]}""",
+                """{"stream":true,"messages":[{"role":"user","content":"[read-and-finish] review"},{"role":"assistant","content":"<read_file>...</read_file>"},{"role":"user","content":"RESULT of read_file: contents"}]}""",
             )
         }.bodyAsText()
         assertTrue(second.contains("<attempt_completion>"))
@@ -138,11 +139,56 @@ class SourcegraphMockRoutesTest {
 
         val sse = client.post("/.api/llm/chat/completions") {
             contentType(ContentType.Application.Json)
-            setBody("""{"messages":[{"role":"user","content":"anything"}]}""")
+            setBody("""{"stream":true,"messages":[{"role":"user","content":"anything"}]}""")
         }.bodyAsText()
 
         assertTrue(sse.contains("<glob_files>"), "custom turn 0 tool must be streamed")
         assertTrue(sse.contains("<pattern>**/*.kt</pattern>"))
         assertTrue(sse.contains("data: [DONE]"))
+    }
+
+    @Test
+    fun `stream false returns a single non-streaming JSON object and does not advance the scenario`() = testApplication {
+        setupSourcegraph()
+
+        // Out-of-band non-streaming call (title/branch gen): single JSON object, no SSE, no [DONE].
+        val resp = client.post("/.api/llm/chat/completions") {
+            contentType(ContentType.Application.Json)
+            setBody("""{"stream":false,"messages":[{"role":"user","content":"Generate a session title"}]}""")
+        }
+        assertEquals(HttpStatusCode.OK, resp.status)
+        val body = resp.bodyAsText()
+        assertFalse(body.contains("data: "), "must NOT be SSE")
+        assertFalse(body.contains("[DONE]"))
+
+        val obj = Json.parseToJsonElement(body).jsonObject
+        assertEquals("chat.completion", obj["object"]?.jsonPrimitive?.content)
+        val choice0 = obj["choices"]!!.jsonArray[0].jsonObject
+        val message = choice0["message"]!!.jsonObject
+        assertEquals("assistant", message["role"]?.jsonPrimitive?.content)
+        assertFalse(message["content"]?.jsonPrimitive?.content.isNullOrBlank())
+        assertEquals("stop", choice0["finish_reason"]?.jsonPrimitive?.content)
+        assertTrue(obj["usage"]?.jsonObject?.get("total_tokens") != null)
+
+        // The side request did NOT advance the scenario: the next stream:true call is still turn 0.
+        val streamed = client.post("/.api/llm/chat/completions") {
+            contentType(ContentType.Application.Json)
+            setBody("""{"stream":true,"messages":[{"role":"user","content":"Generate a session title"}]}""")
+        }.bodyAsText()
+        assertTrue(
+            streamed.contains("<read_file>"),
+            "stream:true is still turn 0 (read_file) — stream:false must not advance the scenario",
+        )
+    }
+
+    @Test
+    fun `stream absent defaults to non-streaming`() = testApplication {
+        setupSourcegraph()
+        val body = client.post("/.api/llm/chat/completions") {
+            contentType(ContentType.Application.Json)
+            setBody("""{"messages":[{"role":"user","content":"hi"}]}""")
+        }.bodyAsText()
+        assertFalse(body.contains("data: "))
+        assertEquals("chat.completion", Json.parseToJsonElement(body).jsonObject["object"]?.jsonPrimitive?.content)
     }
 }
