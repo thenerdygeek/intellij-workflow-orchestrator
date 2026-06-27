@@ -102,6 +102,13 @@ intellijPlatform {
             untilBuild = providers.gradleProperty("pluginUntilBuild")
         }
     }
+    // Isolate B's sandbox into its own build dir (Phase 2a) so the aggregate `./gradlew check`
+    // / `koverVerify` graph doesn't have B's test task reading the SHARED root sandbox
+    // (.intellijPlatform/sandbox/.../plugins-test) that the root project's prepareTestSandbox
+    // also writes — Gradle 9.x fails that as an undeclared cross-task dependency. Matches
+    // :automation/:bamboo/:sonar/:pullrequest/:handover. localPlugin(root) still composes A
+    // into this isolated sandbox, so the two-plugin runIde/test sandbox is unchanged.
+    sandboxContainer = layout.buildDirectory.dir("idea-sandbox")
     // NOTE: no pluginVerification block here. Plugin B is private and hard-depends on
     // local plugin A (com.workflow.orchestrator.plugin), which the Marketplace Plugin
     // Verifier cannot resolve (it searches only Local Repo / bundled / Marketplace).
