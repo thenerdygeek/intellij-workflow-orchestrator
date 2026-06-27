@@ -57,22 +57,34 @@ class Phase2AutomationCarveContractTest {
     @Test
     fun `B plugin_xml bundles automation registrations`() {
         val xml = text("plugin-b/src/main/resources/META-INF/plugin.xml")
-        assertTrue(xml.contains("com.workflow.orchestrator.automation.ui.AutomationTabProvider"),
-            "Plugin B must register the Automation tab provider.")
-        assertTrue(xml.contains("com.workflow.orchestrator.automation.settings.AutomationConfigurable"),
-            "Plugin B must register the Automation settings page.")
-        assertTrue(xml.contains("com.workflow.orchestrator.automation.service.QueueService"),
-            "Plugin B must register the Automation QueueService.")
-        assertTrue(xml.contains("com.workflow.orchestrator.automation.service.AutomationSettingsService"),
-            "Plugin B must register the app-level AutomationSettingsService.")
-        assertFalse(xml.contains("ConflictDetectorService"),
-            "The dangling ConflictDetectorService must NOT be registered in B (class does not exist).")
+        assertTrue(
+            xml.contains("com.workflow.orchestrator.automation.ui.AutomationTabProvider"),
+            "Plugin B must register the Automation tab provider.",
+        )
+        assertTrue(
+            xml.contains("com.workflow.orchestrator.automation.settings.AutomationConfigurable"),
+            "Plugin B must register the Automation settings page.",
+        )
+        assertTrue(
+            xml.contains("com.workflow.orchestrator.automation.service.QueueService"),
+            "Plugin B must register the Automation QueueService.",
+        )
+        assertTrue(
+            xml.contains("com.workflow.orchestrator.automation.service.AutomationSettingsService"),
+            "Plugin B must register the app-level AutomationSettingsService.",
+        )
+        assertFalse(
+            xml.contains("ConflictDetectorService"),
+            "The dangling ConflictDetectorService must NOT be registered in B (class does not exist).",
+        )
     }
 
     @Test
     fun `B build bundles the automation module`() {
         val build = text("plugin-b/build.gradle.kts")
-        assertTrue(build.contains("project(\":automation\")"),
-            "Plugin B's build must bundle the :automation module.")
+        assertTrue(
+            build.contains("project(\":automation\")"),
+            "Plugin B's build must bundle the :automation module.",
+        )
     }
 }
