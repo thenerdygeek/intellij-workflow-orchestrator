@@ -11,6 +11,7 @@
     <extensions defaultExtensionNs="com.workflow.orchestrator">
         <workflowConfig implementation="com.workflow.orchestrator.companyb.CompanyBWorkflowConfig"/>
         <agentToolContributor implementation="com.workflow.orchestrator.companyb.CompanyBToolContributor"/>
+        <tabProvider implementation="com.workflow.orchestrator.automation.ui.AutomationTabProvider"/>
     </extensions>
 
     <extensions defaultExtensionNs="com.intellij">
@@ -20,5 +21,27 @@
             id="workflow.orchestrator.companyb"
             displayName="Company B"
             nonDefaultProject="true"/>
+        <!-- Automation module (carved from A in Phase 2a) -->
+        <projectConfigurable
+            parentId="workflow.orchestrator"
+            instance="com.workflow.orchestrator.automation.settings.AutomationConfigurable"
+            id="workflow.orchestrator.automation"
+            displayName="Automation"
+            nonDefaultProject="true"/>
+        <projectService
+            serviceImplementation="com.workflow.orchestrator.automation.service.QueueService"/>
+        <projectService
+            serviceImplementation="com.workflow.orchestrator.automation.service.TagBuilderService"/>
+        <projectService
+            serviceImplementation="com.workflow.orchestrator.automation.service.TagHistoryService"/>
+        <applicationService
+            serviceImplementation="com.workflow.orchestrator.automation.service.AutomationSettingsService"/>
+        <statusBarWidgetFactory
+            id="WorkflowAutomationStatusBar"
+            implementation="com.workflow.orchestrator.automation.ui.AutomationStatusBarWidgetFactory"/>
+        <postStartupActivity
+            implementation="com.workflow.orchestrator.automation.service.QueueRecoveryStartupActivity"/>
+        <notificationGroup id="workflow.automation" displayType="BALLOON"/>
+        <notificationGroup id="workflow.automation.queue" displayType="BALLOON"/>
     </extensions>
 </idea-plugin>
