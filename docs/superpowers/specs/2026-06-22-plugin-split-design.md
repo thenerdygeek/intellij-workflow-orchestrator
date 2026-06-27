@@ -304,3 +304,34 @@ Consumed via `ApprovalPolicy.forTool(tool)` in `AgentLoop`. No behavior change f
 **Deferred:** persona role-text + the `supportsSpring` gate on security-auditor/performance-engineer are Phase 3, NOT 1b. Tool *registration* was already gated; 1b only aligns the prose.
 
 **Process:** plan 3-round opus-reviewed (accuracy/byte-parity [decompile-level] + completeness + skeptic) — the skeptic caught the sub-agent-signal blocker (registry, not ConnectionSettings) and the completeness review caught the snapshot-count asserts + the stale "5 sub-agent snapshots" (actually 7). Executed subagent-driven; per-task review + final whole-branch review. ⚠ **Pre-existing 0b-3 detekt drift in `:agent` remains (cache-masked, user-deferred to an IDE autocorrect pass); 1b code itself is detekt-clean (import-ordering nits fixed).**
+
+---
+
+## 21. Phase 2a resolved (2026-06-27)
+
+**Carved `:automation` A → B.** `:automation` stays a top-level Gradle module (kept top-level for a
+minimal/reversible diff and so it remains a self-compiling module — B avoids needing `compileOnly(:bamboo)`;
+NOTE: konsist `ModuleBoundaryTest`/`LayeringTest` do not check `:automation` directly — it's not a
+`featureModule` — so the konsist-coverage rationale applies to `:handover` in 2b, not here). It is bundled by
+`:plugin-b` (`implementation(project(":automation")){ isTransitive = false }`) and no longer by A; root keeps
+`kover(project(":automation"))` so the module's tests still count toward the repo coverage floor.
+A's `WorkflowToolWindowFactory.defaultTabs` drops the hard-coded "Automation" tab so it surfaces
+only as B's extension-provided `AutomationTabProvider`. B's `plugin.xml` registers the tab, the
+project/app services, the `AutomationConfigurable` settings page (`parentId="workflow.orchestrator"`),
+the status-bar widget, the queue-recovery startup activity, and the two automation notification groups.
+The trimmed sqlite-jdbc runtime jar relocated from automation's build into B's — A shipped it only
+**transitively via `:automation`**, so removing the module drops it and B re-contributes it (the test
+`TrimmedSqliteJarInvariantsTest` moved with it). Dropped the pre-existing dangling `ConflictDetectorService`
+registration (class does not exist). **Cross-plugin coupling (accepted decision):** `AutomationPanel`
+reaches `bamboo.ui.ManualStageDialog`/`TriggerMode` (A-resident) at runtime via A's parent classloader
+(B `<depends>` A); accepted as-is (mirrors B's existing `compileOnly(:agent)` reliance on A at runtime).
+A cleaner future seam would promote those to a `:core` launcher EP (like `TransitionDialogOpener`/
+`CreatePrLauncher`) — recorded as a follow-up, NOT done in 2a (it's a UI refactor, out of scope).
+`:core`-resident generic tendrils (`DockerTagsProvider` interface, `ProjectIdentifier.automationDir`,
+`WorkflowEvent.Automation*` events) stay in A — they carry no company-proprietary shape. **One genuine
+company VALUE remains in A: `PluginSettings.bambooBuildVariableName="DockerTagsAsJSON"` — deferred to 2c
+(blank in A + seed in B's preset together, so company users' settings UI isn't left empty in the interim).
+DO NOT cut OSS-A (Phase 5) before 2c blanks it.** Headless gate proxy for the cross-classloader
+duplicate-class trap: B's built jar contains automation+sqlite classes but no `:core`/`:bamboo`/okhttp
+duplicates, AND A's post-carve dist contains neither automation classes nor the trimmed sqlite; full
+runtime behavior (incl. the ManualStageDialog path) is a PENDING-USER runIde smoke.

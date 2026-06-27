@@ -1,5 +1,11 @@
 # :automation Module
 
+> **Phase 2a (2026-06-27) — Carved into Plugin B.** `:automation` remains a top-level Gradle module
+> but ships with `:plugin-b` (bundled `isTransitive=false`), NOT Plugin A. Its tab, project/app
+> services, `AutomationConfigurable` settings page, status-bar widget, and queue-recovery startup
+> activity are registered from B's `plugin.xml`. The trimmed sqlite-jdbc runtime jar lives in
+> `plugin-b/build.gradle.kts`. Root keeps `kover(project(":automation"))` for coverage aggregation.
+
 Docker tag staging, automation suite queue management, and deployment triggering.
 
 ## Architecture

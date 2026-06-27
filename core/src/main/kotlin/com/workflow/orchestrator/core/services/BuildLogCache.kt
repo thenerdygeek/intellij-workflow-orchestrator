@@ -9,12 +9,12 @@ import java.util.concurrent.ConcurrentHashMap
  * Per-project cache of the latest [WorkflowEvent.BuildLogReady] for each chain key.
  *
  * Backstops the `EventBus` `replay = 0` semantics: a panel that subscribes after
- * the event was emitted (e.g. Automation tab opened cold after Bamboo's first
+ * the event was emitted (e.g. a build-log consumer opened cold after Bamboo's first
  * poll) can still read the most recent log instead of waiting for the next
  * terminal-status change. Writers ([com.workflow.orchestrator.bamboo] poller)
- * call [put] every time they emit; readers ([com.workflow.orchestrator.automation]
- * panel mount, future Quality / Handover consumers) call [getLatest] before
- * falling back to a REST log fetch.
+ * call [put] every time they emit; readers (Plugin B's AutomationPanel mount,
+ * future Quality / Handover consumers) call [getLatest] before falling back to a
+ * REST log fetch.
  *
  * **Keyed by chain key** (e.g. `PROJ-PLANKEY523`), not by the parent/master plan key.
  * This ensures cross-branch isolation: a poll for feature-branch chain `PROJ-PLAN523`
