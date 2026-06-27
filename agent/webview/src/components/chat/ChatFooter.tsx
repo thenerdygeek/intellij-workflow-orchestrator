@@ -32,6 +32,29 @@ import { DocumentExtractionProgressView } from './DocumentExtractionProgressView
  * - Owns its own refs and scroll-into-view side effects so callers don't
  *   need to thread refs through MessageList.
  */
+/**
+ * Distance-from-bottom (px) below which the footer must NOT force a
+ * `scrollIntoView`. When the user is already near the bottom, Virtuoso's
+ * `followOutput` keeps them pinned as new content (an approval card, a question)
+ * is appended — a competing `scrollIntoView` here only fights `followOutput` and
+ * produces the mid-stream JUMP. Above the threshold the user has deliberately
+ * scrolled up, so a force-scroll is the right way to surface the new card.
+ */
+const FOOTER_FORCE_SCROLL_THRESHOLD_PX = 200;
+
+/**
+ * True when the live scroller (`[role="log"]`, the single Virtuoso viewport) is
+ * more than `thresholdPx` from the bottom. Fail-open: when no scroller is found
+ * (it can't be measured) we return `true` so the legacy always-scroll behavior
+ * is preserved rather than silently swallowing a needed scroll.
+ */
+export function footerShouldForceScroll(thresholdPx = FOOTER_FORCE_SCROLL_THRESHOLD_PX): boolean {
+  const scroller = document.querySelector('[role="log"]');
+  if (!scroller) return true;
+  const distanceFromBottom = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
+  return distanceFromBottom > thresholdPx;
+}
+
 export const ChatFooter = memo(function ChatFooter() {
   const streamingText = useChatStore(s => s.streamingText);
   const streamingMsgTs = useChatStore(s => s.streamingMsgTs);
@@ -65,13 +88,13 @@ export const ChatFooter = memo(function ChatFooter() {
   const toolCallsArray = useMemo(() => Array.from(activeToolCalls.values()), [activeToolCalls]);
 
   useEffect(() => {
-    if (questions && questions.length > 0 && questionsRef.current) {
+    if (questions && questions.length > 0 && questionsRef.current && footerShouldForceScroll()) {
       questionsRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
   }, [questions]);
 
   useEffect(() => {
-    if (pendingApproval && approvalRef.current) {
+    if (pendingApproval && approvalRef.current && footerShouldForceScroll()) {
       approvalRef.current.scrollIntoView({ behavior: 'smooth', block: 'end' });
     }
   }, [pendingApproval]);

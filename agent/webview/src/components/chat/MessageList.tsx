@@ -59,10 +59,28 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
 
   useImperativeHandle(ref, () => ({
     scrollToBottom() {
-      virtuosoRef.current?.scrollToIndex({
-        index: 'LAST',
-        align: 'end',
-        behavior: 'smooth',
+      const v = virtuosoRef.current;
+      if (!v) return;
+      // Tall code blocks first render as ~60px Shiki skeletons, then grow to
+      // 400–800px once highlighting resolves. A single `scrollToIndex` positions
+      // from Virtuoso's STALE cached heights and stops short (parking at the
+      // first/second code block). Re-issue the LAST-item scroll across the next
+      // two animation frames so it re-measures against the now-settled heights
+      // and reaches the true bottom.
+      //
+      // `behavior:'smooth'` is intentionally dropped: its animation raced the
+      // height changes and produced the mid-stream JUMP.
+      //
+      // `autoscrollToBottom()` is deliberately NOT used here — in this
+      // react-virtuoso version it only re-sticks to the bottom after a
+      // SIZE_INCREASE while the viewport was ALREADY at the bottom, so it is a
+      // no-op once the user has scrolled up (i.e. exactly when this chevron is
+      // visible). `scrollToIndex` works regardless of scroll position.
+      const toBottom = () => v.scrollToIndex({ index: 'LAST', align: 'end' });
+      toBottom();
+      requestAnimationFrame(() => {
+        toBottom();
+        requestAnimationFrame(toBottom);
       });
     },
     scrollToIndexStart(index: number) {
