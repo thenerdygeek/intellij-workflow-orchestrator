@@ -13,6 +13,34 @@ repositories {
     intellijPlatform { defaultRepositories() }
 }
 
+// Trimmed sqlite-jdbc — relocated from :automation (Phase 2a). :automation is bundled into B and
+// uses sqlite at runtime (TagHistoryService → .idea/.../automation.db); A does NOT ship sqlite, so
+// B ships the trimmed native jar. See TrimmedSqliteJarInvariantsTest.
+val sqliteJdbcUpstream by configurations.creating {
+    isCanBeConsumed = false
+    isCanBeResolved = true
+    isTransitive = false
+}
+dependencies { sqliteJdbcUpstream(libs.sqlite.jdbc) }
+val trimmedSqliteJar = tasks.register<Jar>("trimmedSqliteJar") {
+    archiveBaseName.set("sqlite-jdbc-trimmed")
+    archiveVersion.set("3.45.3.0")
+    from({ sqliteJdbcUpstream.map { zipTree(it) } })
+    exclude(
+        "org/sqlite/native/Linux-Android/**",
+        "org/sqlite/native/FreeBSD/**",
+        "org/sqlite/native/Linux-Musl/**",
+        "org/sqlite/native/Linux/ppc64/**",
+        "org/sqlite/native/Linux/armv6/**",
+        "org/sqlite/native/Linux/armv7/**",
+        "org/sqlite/native/Linux/arm/**",
+        "org/sqlite/native/Linux/x86/**",
+        "org/sqlite/native/Windows/x86/**",
+        "org/sqlite/native/Windows/armv7/**",
+    )
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+}
+
 dependencies {
     intellijPlatform {
         intellijIdeaUltimate(providers.gradleProperty("platformVersion"))
@@ -30,6 +58,12 @@ dependencies {
     // A ships :core at runtime (it's part of plugin A's classpath), so compileOnly is correct —
     // :core must NOT be bundled inside B's jar (would be a duplicate-class conflict at runtime).
     compileOnly(project(":core"))
+    // Bundle :automation into B's distribution. NON-transitive: ship ONLY automation's own classes —
+    // :core/:bamboo/okhttp resolve at runtime via A's PARENT classloader (B <depends> A). Bundling them
+    // here too would duplicate A's classes across plugin classloaders → LinkageError.
+    implementation(project(":automation")) { isTransitive = false }
+    // automation's runtime sqlite (A doesn't ship it). isTransitive=false above won't carry it.
+    implementation(files(trimmedSqliteJar))
     // B compiles against :agent's agentToolContributor EP (AgentToolContributor,
     // ToolRegistrationContext, AgentTool, FunctionParameters, ToolResult, WorkerType).
     // localPlugin(A) is a runtime/sandbox dep — it does NOT put A's modules on B's compile

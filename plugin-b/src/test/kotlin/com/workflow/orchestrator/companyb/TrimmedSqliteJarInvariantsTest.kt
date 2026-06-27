@@ -1,4 +1,4 @@
-package com.workflow.orchestrator.automation
+package com.workflow.orchestrator.companyb
 
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -7,7 +7,7 @@ import org.junit.jupiter.api.fail
 import java.io.File
 import java.util.jar.JarFile
 
-// Locks in three invariants on the output of `:automation:trimmedSqliteJar`. Each has gone
+// Locks in three invariants on the output of `:plugin-b:trimmedSqliteJar`. Each has gone
 // wrong once already on `refactor/cleanup-perf-caching`:
 //
 //   1. No `org/slf4j` entries. v0.83.35-alpha shipped a JAR that merged slf4j-api into the
@@ -48,7 +48,7 @@ class TrimmedSqliteJarInvariantsTest {
             "trimmedSqliteJar regression: ${slf4j.size} `org/slf4j/*` entries leaked in " +
                 "(${slf4j.take(3).joinToString()}). Would collide with platform-bundled " +
                 "SLF4J at runtime. Verify `sqliteJdbcUpstream` is `isTransitive = false` " +
-                "in automation/build.gradle.kts.",
+                "in plugin-b/build.gradle.kts.",
         )
     }
 
@@ -72,7 +72,7 @@ class TrimmedSqliteJarInvariantsTest {
             actualPaths,
             "trimmedSqliteJar regression: native-libs path set drifted. If this is " +
                 "intentional, update `expectedNativePaths` in this test AND the exclude " +
-                "list in automation/build.gradle.kts.",
+                "list in plugin-b/build.gradle.kts.",
         )
     }
 
@@ -84,8 +84,8 @@ class TrimmedSqliteJarInvariantsTest {
             .firstOrNull { it.name.startsWith("sqlite-jdbc-trimmed-") && it.name.endsWith(".jar") }
             ?: fail(
                 "trimmedSqliteJar JAR not found on test classpath. The test depends on " +
-                    "`:automation:trimmedSqliteJar` being built before `:automation:test`. " +
-                    "Run `./gradlew :automation:trimmedSqliteJar :automation:test`.",
+                    "`:plugin-b:trimmedSqliteJar` being built before `:plugin-b:test`. " +
+                    "Run `./gradlew :plugin-b:trimmedSqliteJar :plugin-b:test`.",
             )
         return JarFile(jar).use { jf -> jf.entries().asSequence().map { it.name }.toList() }
     }
