@@ -1,4 +1,4 @@
-package com.workflow.orchestrator.automation
+package com.workflow.orchestrator.document
 
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -37,7 +37,7 @@ import java.util.zip.ZipFile
 // The test resolves the plugin ZIP by walking up from `user.dir` to `build/distributions/`.
 // If the ZIP isn't present (regular `./gradlew test` run without a prior `:buildPlugin`),
 // the test skips with `Assumptions.assumeTrue` so unit-test runs aren't disrupted. Release
-// gates should run `./gradlew :buildPlugin :automation:test --tests "*BundledPluginLib*"`.
+// gates should run `./gradlew :buildPlugin :document:test --tests "*BundledPluginLib*"`.
 class BundledPluginLibInvariantsTest {
 
     @Test
