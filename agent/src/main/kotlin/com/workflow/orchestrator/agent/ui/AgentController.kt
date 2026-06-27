@@ -515,7 +515,11 @@ class AgentController(
      * have drained the buffer without delivering yet, letting the close land first.)
      */
     private val thinkingStreamBatcher = StreamBatcher(
-        onFlush = { batched -> dashboard.appendToThinking(batched) },
+        // BUG-3 session gate: drop thinking deltas whose streaming session is NOT the one on
+        // screen, so a still-tearing-down loop's <thinking> can't bleed into a history session
+        // opened via showSession. See [streamingSessionIsOnScreen] — a null viewedSessionId means
+        // the live session IS on screen, so the normal active-chat case still streams thinking.
+        onFlush = { batched -> if (streamingSessionIsOnScreen()) dashboard.appendToThinking(batched) },
         invoker = { block ->
             if (javax.swing.SwingUtilities.isEventDispatchThread()) block() else invokeLater { block() }
         }
@@ -2720,8 +2724,11 @@ class AgentController(
                 // closes the drained-but-undelivered window a flush-then-post pair left
                 // open (an EDT timer tick could drain without having delivered yet).
                 invokeLater {
+                    // flush() drains the batcher (its bridge push is gated in onFlush); the close
+                    // is gated too so the block is never finalized into an off-screen history
+                    // session (BUG-3). streamingSessionIsOnScreen() re-checks at delivery time.
                     thinkingStreamBatcher.flush()
-                    dashboard.endThinking(durationMs)
+                    if (streamingSessionIsOnScreen()) dashboard.endThinking(durationMs)
                 }
             }
         }
@@ -2747,6 +2754,20 @@ class AgentController(
         // deltas must not deliver into the next chat (W4-B3 review minor #2).
         subAgentThinkingBatcher.clear()
     }
+
+    /**
+     * BUG-3 session gate for live thinking. True when the session whose agent loop is currently
+     * streaming (the live [currentSessionId]) is the one shown on the panel. The panel shows a
+     * history session ([viewedSessionId]) when one is open via [showSession]; otherwise it shows
+     * the live session — so a null [viewedSessionId] means the live session IS on screen (the
+     * normal active-chat case, where thinking must keep rendering). Returns false ONLY when a
+     * DIFFERENT history session is being viewed while a prior loop is still tearing down, so its
+     * leftover `<thinking>` deltas don't bleed into the viewed session. Mirrors the
+     * `viewedSessionId != sessionId` gate the delegation/async-card pushes use, adapted for the
+     * thinking path (whose target session is the live [currentSessionId], not a push parameter).
+     */
+    private fun streamingSessionIsOnScreen(): Boolean =
+        viewedSessionId == null || viewedSessionId == currentSessionId
 
     /**
      * Approval gate -- suspends the agent loop until the user approves, denies,
@@ -4355,6 +4376,12 @@ class AgentController(
         }
         walkthroughService()?.endTour(byUser = false)
         currentJob = null
+        // BUG-3: clear the pre-bridge stream/thinking buffers from the loop we're leaving so its
+        // in-flight <thinking> deltas (and any buffered tokens) can't bleed into the history
+        // session we're about to display. cancelCurrentTask() is async — the loop can still emit a
+        // few teardown chunks — so the thinking-bridge session gate (streamingSessionIsOnScreen)
+        // backstops any deltas that arrive after this point.
+        clearStream()
         viewedSessionId = sessionId
         // W4-B2 review Important #1: capture the generation on EDT phase 1; compared at
         // push time alongside the sessionId check (showHistory/resetForNewChat bump it).
@@ -4442,11 +4469,35 @@ class AgentController(
     /**
      * Resume a session that the user is currently viewing. Called when the user
      * clicks "Resume" in the resume bar, optionally with a message to add.
+     *
+     * BUG-1 load-and-park: a "Resume" click with NO typed text must NOT auto-run the
+     * agent loop (which would re-emit the last tool call and re-open the approval gate
+     * with nothing typed). Instead it dismisses the resume bar's auto-run affordance and
+     * leaves the session VIEWED, so the iteration only starts when the user actually sends
+     * a message. That subsequent message re-enters here via the "typed while viewing"
+     * branch in [executeTaskInternal] with a non-blank [userText] → [resumeSession], which
+     * rehydrates the persisted history and continues the loop.
+     *
+     * Keeping [viewedSessionId] SET in the park case is load-bearing: clearing it would
+     * route the next typed message to the fresh-session [executeTask] path (a new, empty
+     * ContextManager) and silently lose the conversation history.
      */
     fun resumeViewedSession(userText: String? = null) {
         val sessionId = viewedSessionId
         if (sessionId == null) {
             LOG.warn("AgentController.resumeViewedSession: no viewed session to resume")
+            return
+        }
+        // Park on a no-text Resume click: hide the bar, focus the composer, and wait for
+        // the user to type. Do NOT clear viewedSessionId or call resumeSession (auto-run).
+        if (userText.isNullOrBlank()) {
+            LOG.info("AgentController.resumeViewedSession: parking $sessionId (no text) — awaiting user message")
+            dashboard.hideResumeBar()
+            dashboard.focusInput()
+            dashboard.appendStatus(
+                "Type a message to continue this session.",
+                RichStreamingPanel.StatusType.INFO,
+            )
             return
         }
         viewedSessionId = null
