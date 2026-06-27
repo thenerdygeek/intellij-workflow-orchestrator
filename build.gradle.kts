@@ -205,7 +205,6 @@ dependencies {
     implementation(project(":bamboo"))
     implementation(project(":sonar"))
     implementation(project(":pullrequest"))
-    implementation(project(":automation"))
     implementation(project(":handover"))
     implementation(project(":agent"))
     implementation(project(":web"))

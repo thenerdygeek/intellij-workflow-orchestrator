@@ -34,4 +34,23 @@ class Phase2AutomationCarveContractTest {
                 "extension-provided tab contributed by Plugin B.",
         )
     }
+
+    @Test
+    fun `A plugin_xml registers no automation classes`() {
+        val xml = text("src/main/resources/META-INF/plugin.xml")
+        assertFalse(
+            xml.contains("com.workflow.orchestrator.automation"),
+            "Plugin A's plugin.xml must not register any :automation class after the carve.",
+        )
+    }
+
+    @Test
+    fun `A build does not bundle the automation module`() {
+        val build = text("build.gradle.kts")
+        assertFalse(
+            build.contains("implementation(project(\":automation\")"),
+            "Plugin A's build must not bundle (implementation) the :automation project after the carve. " +
+                "kover(project(\":automation\")) is intentionally retained for repo-wide coverage aggregation.",
+        )
+    }
 }

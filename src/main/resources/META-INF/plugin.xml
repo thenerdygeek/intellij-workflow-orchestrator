@@ -130,13 +130,6 @@
             nonDefaultProject="true"/>
 
         <projectConfigurable
-            parentId="workflow.orchestrator"
-            instance="com.workflow.orchestrator.automation.settings.AutomationConfigurable"
-            id="workflow.orchestrator.automation"
-            displayName="Automation"
-            nonDefaultProject="true"/>
-
-        <projectConfigurable
             parentId="workflow.orchestrator.agent"
             instance="com.workflow.orchestrator.core.settings.MultimodalSettingsConfigurable"
             id="workflow.orchestrator.agent.multimodal"
@@ -185,7 +178,6 @@
         <notificationGroup id="workflow.quality" displayType="BALLOON"/>
         <notificationGroup id="workflow.jira" displayType="BALLOON"/>
         <notificationGroup id="workflow.queue" displayType="BALLOON"/>
-        <notificationGroup id="workflow.automation" displayType="BALLOON"/>
         <notificationGroup id="workflow.autodetect"
                            displayType="BALLOON"
                            isLogByDefault="false"/>
@@ -332,36 +324,14 @@
             <category>Workflow Orchestrator</category>
         </intentionAction>
 
-        <!-- Automation Module Project Services -->
-        <projectService
-            serviceImplementation="com.workflow.orchestrator.automation.service.QueueService"/>
-        <projectService
-            serviceImplementation="com.workflow.orchestrator.automation.service.TagBuilderService"/>
-        <projectService
-            serviceImplementation="com.workflow.orchestrator.automation.service.ConflictDetectorService"/>
-        <projectService
-            serviceImplementation="com.workflow.orchestrator.automation.service.TagHistoryService"/>
         <!-- App-level (cross-project) -->
         <applicationService
             serviceImplementation="com.workflow.orchestrator.core.settings.ConnectionSettings"/>
-        <applicationService
-            serviceImplementation="com.workflow.orchestrator.automation.service.AutomationSettingsService"/>
         <applicationService
             serviceImplementation="com.workflow.orchestrator.core.network.NetworkStateService"/>
         <!-- B1: app-level lifecycle owner for AgentConfigLoader (survives project close) -->
         <applicationService
             serviceImplementation="com.workflow.orchestrator.agent.tools.subagent.AgentConfigLoaderLifecycle"/>
-
-        <!-- Status Bar -->
-        <statusBarWidgetFactory id="WorkflowAutomationStatusBar"
-            implementation="com.workflow.orchestrator.automation.ui.AutomationStatusBarWidgetFactory"/>
-
-        <!-- Startup Recovery -->
-        <postStartupActivity
-            implementation="com.workflow.orchestrator.automation.service.QueueRecoveryStartupActivity"/>
-
-        <!-- Notification group for queue state changes -->
-        <notificationGroup id="workflow.automation.queue" displayType="BALLOON"/>
 
         <!-- Phase 2B: Handover Services -->
         <projectService
@@ -521,7 +491,6 @@
         <tabProvider implementation="com.workflow.orchestrator.bamboo.ui.BuildTabProvider"/>
         <tabProvider implementation="com.workflow.orchestrator.sonar.ui.QualityTabProvider"/>
         <tabProvider implementation="com.workflow.orchestrator.pullrequest.ui.PrTabProvider"/>
-        <tabProvider implementation="com.workflow.orchestrator.automation.ui.AutomationTabProvider"/>
         <tabProvider implementation="com.workflow.orchestrator.handover.ui.HandoverTabProvider"/>
         <tabProvider implementation="com.workflow.orchestrator.agent.ui.AgentTabProvider"/>
         <tabProvider implementation="com.workflow.orchestrator.core.toolwindow.insights.InsightsTabProvider"/>
