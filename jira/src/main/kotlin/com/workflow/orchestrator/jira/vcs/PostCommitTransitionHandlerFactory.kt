@@ -66,7 +66,7 @@ class PostCommitTransitionHandler(private val project: Project) : CheckinHandler
                     if (PostCommitTransitionLogic.shouldSuggestTransition(currentStatus, triggerStatuses)) {
                         com.intellij.openapi.application.invokeLater {
                             val notification = com.intellij.notification.NotificationGroupManager.getInstance()
-                                .getNotificationGroup("workflow.automation")
+                                .getNotificationGroup("workflow.jira")
                                 .createNotification(
                                     "Transition $ticketId?",
                                     "$ticketId is still '$currentStatus'. Open transition dialog?",

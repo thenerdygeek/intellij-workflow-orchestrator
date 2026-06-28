@@ -87,4 +87,36 @@ class Phase2AutomationCarveContractTest {
             "Plugin B's build must bundle the :automation module.",
         )
     }
+
+    @Test
+    fun `no A-resident src-main Kotlin file references the B-only workflow-automation notification group`() {
+        val aModules = listOf("core", "jira", "bamboo", "sonar", "pullrequest", "handover", "agent", "web", "document")
+        val hits = mutableListOf<String>()
+        for (module in aModules) {
+            val srcMain = File(repoRoot, "$module/src/main")
+            if (!srcMain.exists()) continue
+            srcMain.walkTopDown()
+                .filter { it.isFile && it.name.endsWith(".kt") }
+                .forEach { file ->
+                    if (file.readText().contains("\"workflow.automation\"")) {
+                        hits.add("$module/${file.name}")
+                    }
+                }
+        }
+        assertTrue(
+            hits.isEmpty(),
+            "A-resident src/main Kotlin files must not reference the B-only \"workflow.automation\" " +
+                "notification group. Offending files: $hits",
+        )
+    }
+
+    @Test
+    fun `root build still aggregates automation module in kover`() {
+        val build = text("build.gradle.kts")
+        assertTrue(
+            build.contains("kover(project(\":automation\"))"),
+            "root build.gradle.kts must retain kover(project(\":automation\")) for repo-wide coverage " +
+                "aggregation; the carve intentionally kept :automation in the coverage roll-up.",
+        )
+    }
 }
