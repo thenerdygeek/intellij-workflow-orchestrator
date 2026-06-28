@@ -158,13 +158,6 @@
             nonDefaultProject="true"/>
         <postStartupActivity implementation="com.workflow.orchestrator.web.audit.WebAuditRotationStartup"/>
 
-        <projectConfigurable
-            parentId="workflow.orchestrator"
-            instance="com.workflow.orchestrator.core.settings.HandoverConfigurable"
-            id="workflow.orchestrator.handover"
-            displayName="Handover"
-            nonDefaultProject="true"/>
-
         <!-- Tool Window -->
         <toolWindow
             id="Workflow"
@@ -333,29 +326,13 @@
         <applicationService
             serviceImplementation="com.workflow.orchestrator.agent.tools.subagent.AgentConfigLoaderLifecycle"/>
 
-        <!-- Phase 2B: Handover Services -->
-        <projectService
-            serviceImplementation="com.workflow.orchestrator.handover.service.HandoverStateService"/>
+        <!-- Copyright header enforcement (core.copyright) -->
         <projectService
             serviceImplementation="com.workflow.orchestrator.core.copyright.CopyrightFixService"/>
-        <projectService
-            serviceImplementation="com.workflow.orchestrator.handover.service.PreReviewService"/>
-        <projectService
-            serviceImplementation="com.workflow.orchestrator.core.bitbucket.PrService"/>
-        <projectService
-            serviceImplementation="com.workflow.orchestrator.handover.service.JiraClosureService"/>
-        <projectService
-            serviceImplementation="com.workflow.orchestrator.handover.service.TimeTrackingService"/>
-        <projectService
-            serviceImplementation="com.workflow.orchestrator.handover.service.HandoverAiSummaryCache"/>
-        <projectService
-            serviceImplementation="com.workflow.orchestrator.handover.service.HandoverPlaceholderResolver"/>
-        <projectService
-            serviceImplementation="com.workflow.orchestrator.handover.service.HandoverOverrideTracker"/>
-        <postStartupActivity
-            implementation="com.workflow.orchestrator.handover.service.HandoverOverrideTrackerActivity"/>
 
         <!-- Pull Request Services -->
+        <projectService
+            serviceImplementation="com.workflow.orchestrator.core.bitbucket.PrService"/>
         <projectService
             serviceImplementation="com.workflow.orchestrator.pullrequest.service.PrListService"/>
         <projectService
@@ -370,9 +347,6 @@
 
         <!-- Pull Request Notification Group -->
         <notificationGroup id="workflow.pr" displayType="BALLOON"/>
-
-        <!-- Handover Notification Group -->
-        <notificationGroup id="workflow.handover" displayType="BALLOON"/>
 
         <!-- Agent Module -->
         <notificationGroup id="workflow.agent" displayType="BALLOON"/>
@@ -491,7 +465,6 @@
         <tabProvider implementation="com.workflow.orchestrator.bamboo.ui.BuildTabProvider"/>
         <tabProvider implementation="com.workflow.orchestrator.sonar.ui.QualityTabProvider"/>
         <tabProvider implementation="com.workflow.orchestrator.pullrequest.ui.PrTabProvider"/>
-        <tabProvider implementation="com.workflow.orchestrator.handover.ui.HandoverTabProvider"/>
         <tabProvider implementation="com.workflow.orchestrator.agent.ui.AgentTabProvider"/>
         <tabProvider implementation="com.workflow.orchestrator.core.toolwindow.insights.InsightsTabProvider"/>
         <sessionHistoryReader implementation="com.workflow.orchestrator.agent.insights.AgentSessionHistoryReader"/>

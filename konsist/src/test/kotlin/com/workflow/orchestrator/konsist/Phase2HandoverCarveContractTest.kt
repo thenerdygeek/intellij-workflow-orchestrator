@@ -1,6 +1,7 @@
 package com.workflow.orchestrator.konsist
 
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import java.io.File
 
@@ -25,6 +26,60 @@ class Phase2HandoverCarveContractTest {
             src.contains("DefaultTab(\"Handover\""),
             "WorkflowToolWindowFactory must not declare Handover as a default tab; it is now an " +
                 "extension-provided tab contributed by Plugin B.",
+        )
+    }
+
+    @Test
+    fun `A plugin_xml registers no handover classes`() {
+        val xml = text("src/main/resources/META-INF/plugin.xml")
+        // CopyrightFixService is now core.copyright (kept in A) and PrService is core.bitbucket (kept in A);
+        // neither matches the handover package. Nothing under com.workflow.orchestrator.handover may remain.
+        assertFalse(
+            xml.contains("com.workflow.orchestrator.handover"),
+            "Plugin A's plugin.xml must not register any :handover class after the carve.",
+        )
+        assertFalse(
+            xml.contains("PreReviewService"),
+            "The dead PreReviewService registration must be dropped (class does not exist).",
+        )
+    }
+
+    @Test
+    fun `A build does not bundle the handover module`() {
+        val build = text("build.gradle.kts")
+        assertFalse(
+            build.contains("implementation(project(\":handover\")"),
+            "Plugin A's build must not bundle the :handover project (kover(:handover) is retained).",
+        )
+    }
+
+    @Test
+    fun `A keeps the generic CopyrightFixService and PrService`() {
+        val xml = text("src/main/resources/META-INF/plugin.xml")
+        assertTrue(
+            xml.contains("com.workflow.orchestrator.core.copyright.CopyrightFixService"),
+            "Generic CopyrightFixService stays registered in A (moved to :core).",
+        )
+        assertTrue(
+            xml.contains("com.workflow.orchestrator.core.bitbucket.PrService"),
+            "Generic PrService (consumed by :pullrequest) stays registered in A.",
+        )
+    }
+
+    @Test
+    fun `no A-resident src-main Kotlin file references the B-only workflow-handover notification group`() {
+        val aModules = listOf("core", "jira", "bamboo", "sonar", "pullrequest", "automation", "agent", "web", "document")
+        val hits = mutableListOf<String>()
+        for (module in aModules) {
+            val srcMain = File(repoRoot, "$module/src/main")
+            if (!srcMain.exists()) continue
+            srcMain.walkTopDown()
+                .filter { it.isFile && it.name.endsWith(".kt") }
+                .forEach { f -> if (f.readText().contains("\"workflow.handover\"")) hits.add("$module/${f.name}") }
+        }
+        assertTrue(
+            hits.isEmpty(),
+            "A-resident src/main files must not reference the B-only \"workflow.handover\" group: $hits",
         )
     }
 }

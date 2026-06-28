@@ -74,6 +74,8 @@
     <ID>MagicNumber:CopyrightFixCard.kt$CopyrightFixCard$40</ID>
     <ID>MagicNumber:CopyrightFixCard.kt$CopyrightFixCard$60</ID>
     <ID>MagicNumber:CopyrightFixCard.kt$CopyrightFixCard$8</ID>
+    <ID>MagicNumber:HandoverConfigurable.kt$HandoverConfigurable$30</ID>
+    <ID>MagicNumber:HandoverConfigurable.kt$HandoverConfigurable$50</ID>
     <ID>MagicNumber:HandoverOverrideBanner.kt$HandoverOverrideBanner$12</ID>
     <ID>MagicNumber:HandoverOverrideBanner.kt$HandoverOverrideBanner$3</ID>
     <ID>MagicNumber:HandoverOverrideBanner.kt$HandoverOverrideBanner$6</ID>
@@ -167,6 +169,8 @@
     <ID>NoWildcardImports:ChecksTab.kt$import javax.swing.*</ID>
     <ID>NoWildcardImports:ChecksTabTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
     <ID>NoWildcardImports:EmailPreviewPaneTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:HandoverConfigurable.kt$import com.intellij.ui.dsl.builder.*</ID>
+    <ID>NoWildcardImports:HandoverConfigurableTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
     <ID>NoWildcardImports:HandoverModelsTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
     <ID>NoWildcardImports:HandoverOverrideBannerTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
     <ID>NoWildcardImports:HandoverOverrideTrackerTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
@@ -195,6 +199,8 @@
     <ID>WildcardImport:ChecksTab.kt$import javax.swing.*</ID>
     <ID>WildcardImport:ChecksTabTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
     <ID>WildcardImport:EmailPreviewPaneTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:HandoverConfigurable.kt$import com.intellij.ui.dsl.builder.*</ID>
+    <ID>WildcardImport:HandoverConfigurableTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
     <ID>WildcardImport:HandoverModelsTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
     <ID>WildcardImport:HandoverOverrideBannerTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
     <ID>WildcardImport:HandoverOverrideTrackerTest.kt$import org.junit.jupiter.api.Assertions.*</ID>

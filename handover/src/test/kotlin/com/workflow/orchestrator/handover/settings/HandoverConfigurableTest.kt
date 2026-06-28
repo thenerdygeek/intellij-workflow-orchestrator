@@ -1,5 +1,6 @@
-package com.workflow.orchestrator.core.settings
+package com.workflow.orchestrator.handover.settings
 
+import com.workflow.orchestrator.core.settings.PluginSettings
 import io.mockk.every
 import io.mockk.mockk
 import org.junit.jupiter.api.Assertions.*

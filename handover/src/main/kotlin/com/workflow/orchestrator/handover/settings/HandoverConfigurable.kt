@@ -1,9 +1,10 @@
-package com.workflow.orchestrator.core.settings
+package com.workflow.orchestrator.handover.settings
 
 import com.intellij.ide.actions.RevealFileAction
 import com.intellij.openapi.options.SearchableConfigurable
 import com.intellij.openapi.project.Project
 import com.intellij.ui.dsl.builder.*
+import com.workflow.orchestrator.core.settings.PluginSettings
 import com.workflow.orchestrator.core.util.ProjectIdentifier
 import java.time.Instant
 import java.time.temporal.ChronoUnit

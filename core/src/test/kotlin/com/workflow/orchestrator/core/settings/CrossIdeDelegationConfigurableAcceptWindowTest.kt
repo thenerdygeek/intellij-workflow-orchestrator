@@ -9,7 +9,7 @@ import org.junit.jupiter.api.Test
  * Focused tests for the [CrossIdeDelegationConfigurable] accept-window field:
  * [PluginSettings.State.delegationAcceptWindowSeconds].
  *
- * Mirrors the pattern of [HandoverConfigurableTest]: construct with a mocked
+ * Mirrors the pattern of HandoverConfigurableTest: construct with a mocked
  * [Project] → mocked [PluginSettings] → real [PluginSettings.State]. Verifies
  * the isModified / apply / reset lifecycle for the new spinner field, following
  * the same DialogPanel pattern the existing fields use.

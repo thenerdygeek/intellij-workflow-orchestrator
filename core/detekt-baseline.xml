@@ -567,8 +567,6 @@
     <ID>MagicNumber:GenerateCommitMessageAction.kt$GenerateCommitMessageAction$40</ID>
     <ID>MagicNumber:GenerateCommitMessageAction.kt$GenerateCommitMessageAction$5</ID>
     <ID>MagicNumber:GradleErrorParser.kt$GradleErrorParser$5</ID>
-    <ID>MagicNumber:HandoverConfigurable.kt$HandoverConfigurable$30</ID>
-    <ID>MagicNumber:HandoverConfigurable.kt$HandoverConfigurable$50</ID>
     <ID>MagicNumber:HealthCheckService.kt$HealthCheckService$1000L</ID>
     <ID>MagicNumber:HtmlReportRenderer.kt$HtmlReportRenderer$100</ID>
     <ID>MagicNumber:HtmlReportRenderer.kt$HtmlReportRenderer$11</ID>
@@ -1113,8 +1111,6 @@
     <ID>NoWildcardImports:DiagnosticDialog.kt$import javax.swing.*</ID>
     <ID>NoWildcardImports:EventBusTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
     <ID>NoWildcardImports:GitMergeBaseUtilTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
-    <ID>NoWildcardImports:HandoverConfigurable.kt$import com.intellij.ui.dsl.builder.*</ID>
-    <ID>NoWildcardImports:HandoverConfigurableTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
     <ID>NoWildcardImports:HealthCheckCheckinHandlerFactoryTest.kt$import io.mockk.*</ID>
     <ID>NoWildcardImports:HealthCheckCheckinHandlerFactoryTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
     <ID>NoWildcardImports:HealthCheckService.kt$import com.workflow.orchestrator.core.healthcheck.checks.*</ID>
@@ -1368,8 +1364,6 @@
     <ID>WildcardImport:DiagnosticDialog.kt$import javax.swing.*</ID>
     <ID>WildcardImport:EventBusTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
     <ID>WildcardImport:GitMergeBaseUtilTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
-    <ID>WildcardImport:HandoverConfigurable.kt$import com.intellij.ui.dsl.builder.*</ID>
-    <ID>WildcardImport:HandoverConfigurableTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
     <ID>WildcardImport:HealthCheckCheckinHandlerFactoryTest.kt$import io.mockk.*</ID>
     <ID>WildcardImport:HealthCheckCheckinHandlerFactoryTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
     <ID>WildcardImport:HealthCheckService.kt$import com.workflow.orchestrator.core.healthcheck.checks.*</ID>
