@@ -78,6 +78,8 @@ class HandoverConfigurableTest {
 
     @Test
     fun `removing chip from state removes it from quickClipboardChips`() {
+        // docker.tag is no longer a neutral default — add it first to test removal behaviour
+        state.quickClipboardChips.add("docker.tag")
         assertTrue(state.quickClipboardChips.contains("docker.tag"))
         state.quickClipboardChips.remove("docker.tag")
         assertFalse(state.quickClipboardChips.contains("docker.tag"))

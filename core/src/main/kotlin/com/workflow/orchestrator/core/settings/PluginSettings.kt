@@ -129,10 +129,14 @@ class PluginSettings : SimplePersistentStateComponent<PluginSettings.State>(Stat
         var sonarPreferredCodeMode by property(0)
 
         // Automation
-        /** Canonical Bamboo plan variable carrying the Docker tags JSON payload.
-         *  Probe-confirmed value: "DockerTagsAsJSON" (bundle-automation plan_variables_via_context.json).
-         *  All readers must compare case-insensitively so user-configured variants still match. */
-        var bambooBuildVariableName by string("DockerTagsAsJSON")
+        /**
+         * Bamboo plan variable carrying the Docker tags JSON payload.
+         * Blank in Plugin A (OSS default); the company value ("DockerTagsAsJSON") is supplied
+         * by Plugin B's ConfigPreset EP (Phase 2c) and applied by ConfigPresetSeeder (Task 3).
+         * All `:automation` readers use `?.takeIf { isNotBlank() } ?: "DockerTagsAsJSON"` as a
+         * blank-safe fallback, so behaviour is preserved even without a preset.
+         */
+        var bambooBuildVariableName by string("")
 
         // Sprint dashboard view preferences
         var sprintSortBy by string("Default")
@@ -523,6 +527,14 @@ class PluginSettings : SimplePersistentStateComponent<PluginSettings.State>(Stat
         /** Maximum number of cached entries (LRU eviction beyond this). */
         var webFetchCacheMaxEntries by property(100)
 
+        /**
+         * One-shot seed sentinel for the ConfigPreset EP (Phase 2c).
+         * Set to true by [com.workflow.orchestrator.core.settings.ConfigPresetSeeder] (Task 3)
+         * once a value-providing ConfigPreset has been applied, so that company defaults seeded
+         * from Plugin B are not re-applied after the user has curated their settings.
+         */
+        var configPresetApplied by property(false)
+
         init {
             // Populate default whitelist on first instantiation. Persisted lists
             // round-trip independently — if the user clears the list it stays
@@ -533,13 +545,11 @@ class PluginSettings : SimplePersistentStateComponent<PluginSettings.State>(Stat
                 )
             }
             // Populate quick-clipboard chip defaults on first instantiation.
+            // Uses NEUTRAL_QUICK_CLIPBOARD_CHIPS (Plugin A OSS baseline — no company chips).
+            // Company chips (docker.tag, docker.tagsJson, automation.url) are added by
+            // Plugin B's ConfigPreset EP via ConfigPresetSeeder (Phase 2c, Task 3).
             if (quickClipboardChips.isEmpty()) {
-                quickClipboardChips.addAll(
-                    listOf(
-                        "docker.tag", "docker.tagsJson", "pr.url", "build.url",
-                        "automation.url", "ticket.id", "ai.changeSummary", "ai.ticketSummary"
-                    )
-                )
+                quickClipboardChips.addAll(PluginSettings.NEUTRAL_QUICK_CLIPBOARD_CHIPS)
             }
         }
     }
@@ -574,6 +584,23 @@ class PluginSettings : SimplePersistentStateComponent<PluginSettings.State>(Stat
         fun getInstance(project: Project): PluginSettings {
             return project.service<PluginSettings>()
         }
+
+        /**
+         * OSS-neutral quick-clipboard chip baseline for Plugin A.
+         * Contains generic artefacts only — no company-specific keys (docker.tag,
+         * docker.tagsJson, automation.url). Plugin B extends this list via its
+         * ConfigPreset EP (Phase 2c, Task 3 — ConfigPresetSeeder).
+         *
+         * Referenced by [State.init] (by simple name) and by unit tests/Task 3 seeder
+         * as `PluginSettings.NEUTRAL_QUICK_CLIPBOARD_CHIPS`.
+         */
+        val NEUTRAL_QUICK_CLIPBOARD_CHIPS = listOf(
+            "pr.url",
+            "build.url",
+            "ticket.id",
+            "ai.changeSummary",
+            "ai.ticketSummary",
+        )
     }
 }
 

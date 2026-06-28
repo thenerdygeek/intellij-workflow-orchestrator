@@ -16,15 +16,21 @@ import org.junit.jupiter.api.Test
 class PluginSettingsTest {
 
     @Test
-    fun `quickClipboardChips default is the canonical 8-item list`() {
+    fun `quickClipboardChips default is the neutral baseline list`() {
         val state = PluginSettings.State()
-        assertEquals(
-            listOf(
-                "docker.tag", "docker.tagsJson", "pr.url", "build.url",
-                "automation.url", "ticket.id", "ai.changeSummary", "ai.ticketSummary"
-            ),
-            state.quickClipboardChips.toList()
-        )
+        assertEquals(PluginSettings.NEUTRAL_QUICK_CLIPBOARD_CHIPS, state.quickClipboardChips.toList())
+    }
+
+    @Test
+    fun `bambooBuildVariableName defaults to empty string`() {
+        val state = PluginSettings.State()
+        assertEquals("", state.bambooBuildVariableName)
+    }
+
+    @Test
+    fun `configPresetApplied defaults to false`() {
+        val state = PluginSettings.State()
+        assertFalse(state.configPresetApplied)
     }
 
     @Test
