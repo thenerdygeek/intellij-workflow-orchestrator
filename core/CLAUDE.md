@@ -59,6 +59,7 @@ Activity-aware polling: `baseIntervalMs` (default 30s), `maxIntervalMs` (default
 |---|---|---|
 | `textGenerationService` | `core/ai/TextGenerationService` | Cross-module AI text generation (used by :bamboo and :pullrequest for PR descriptions + titles). |
 | `createPrLauncher` | `core/bitbucket/CreatePrLauncher` | Entry point for PR creation. Registered by :pullrequest. Called only from :pullrequest PrDashboardPanel (the Build-tab Create PR button was removed in the 2026-04-27 PrBar redesign). Signature: `launch(project, scope)`. |
+| `configPreset` | `core/config/ConfigPreset` | Application-level EP for a depending plugin (Plugin B) to supply company default VALUES into A's neutral settings. `public` + `@InternalApi` (unfrozen; B recompiles in lockstep). Lowest `order` wins (mirrors `WorkflowConfig`). A's `DefaultConfigPreset` registers `order = Int.MAX_VALUE` (all-null fallback); B registers `CompanyBConfigPreset` with `order = 0`. Seeding logic lives in A (`ConfigPresetSeeder`); B owns only the values. |
 
 ## Settings
 
@@ -180,6 +181,29 @@ from XML (a user who never set the value has no record of the old default on dis
 for upgraders. Pattern for future de-conventions: add a `if (field == neutralDefault) field = legacyLiteral`
 line in `seedLegacyConventionDefaults` and bump `CURRENT_VERSION`. Seed ONLY init-default fields this
 way; `init`-block-populated fields (e.g. `quickClipboardChips`) are always persisted and need no seeding.
+
+### ConfigPreset EP + ConfigPresetSeeder (plugin split, Phase 2c)
+
+`core/config/ConfigPreset.kt` — application-level EP (`com.workflow.orchestrator.configPreset`).
+Plugin B implements this to supply company default VALUES into A's neutral `PluginSettings` fields.
+A owns all seeding LOGIC; B owns only the values.
+
+- **4 fields** (each returns null = "no opinion"): `bambooBuildVariableName()`, `quickClipboardChips()`,
+  `defaultTargetBranch()`, `copyrightTemplate()`.
+- **Order resolution:** lowest `order` wins (same pattern as `WorkflowConfig`). A's `DefaultConfigPreset`
+  registers `order = Int.MAX_VALUE` (all-null fallback). B's `CompanyBConfigPreset` registers `order = 0`.
+- **`ConfigPresetSeeder`** (`core/settings/ConfigPresetSeeder.kt`) is called in
+  `SettingsMigrationStartupActivity` AFTER `SettingsMigration`. One-shot + guarded:
+  - Sentinel `state.configPresetApplied` prevents re-seed on every restart.
+  - Sentinel is stamped ONLY when at least one field is non-null; an A-alone install (all-null
+    `DefaultConfigPreset`) never stamps it, so installing B afterward still seeds.
+  - Per-field guard: each field is written only if the persisted value still equals A's neutral
+    baseline (user edits and upgrader values from `SettingsMigration` are never clobbered).
+- **B's values** (`CompanyBConfigPreset`): `bambooBuildVariableName="DockerTagsAsJSON"`,
+  `quickClipboardChips` = 8-entry company list (docker.tag, docker.tagsJson, pr.url, build.url,
+  automation.url, ticket.id, ai.changeSummary, ai.ticketSummary), `defaultTargetBranch="develop"`,
+  `copyrightTemplate=null` (company sets the real header in `HandoverConfigurable`; the EP supports it
+  but B returns null to avoid seeding wrong placeholder text).
 
 ## CredentialStore
 

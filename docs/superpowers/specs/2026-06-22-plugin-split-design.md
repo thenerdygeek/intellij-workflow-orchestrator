@@ -379,3 +379,85 @@ company-proprietary shape; it was relocated out of the handover-adjacent block i
 recompile them), so B needs no Git4Idea `<depends>` beyond what A already provides.
 **PENDING-USER runIde smoke** confirms: no `LinkageError`/`NoClassDefFoundError` in `idea.log` when the
 Handover tab loads and `CopyrightFixCard` rescans changed files via `ChangeListManager.allChanges`.
+
+---
+
+## 23. Phase 2c resolved (2026-06-27)
+
+**`ConfigPreset` EP (application-level).** `core/config/ConfigPreset.kt` declares a
+`com.workflow.orchestrator.configPreset` application-level EP (`public` + `@InternalApi`,
+unfrozen-by-policy). It mirrors the winner-take-all order-resolution of `WorkflowConfig` (lowest
+`order` wins; A's `DefaultConfigPreset` registers `order = Int.MAX_VALUE`). Four fields:
+`bambooBuildVariableName(): String?`, `quickClipboardChips(): List<String>?`,
+`defaultTargetBranch(): String?`, `copyrightTemplate(): String?`. Each returns null = "no opinion";
+A keeps its neutral default. No `Project` param — values are company-global; seeding is per-project.
+
+**`DefaultConfigPreset` (Plugin A, `order = Int.MAX_VALUE`).** Returns null for every field.
+Registered in A's `plugin.xml`. Ensures `ConfigPreset.resolve()` always returns a non-null instance
+even when Plugin B is absent. Never stamps the `configPresetApplied` sentinel (all-null → no
+value-providing preset → seeder's `provides` guard is false → sentinel is not set → a later B install
+still seeds).
+
+**`ConfigPresetSeeder` (Plugin A, one-shot + guarded).** `core/settings/ConfigPresetSeeder.kt`.
+Applied in `SettingsMigrationStartupActivity` AFTER the `SettingsMigration` runs. Algorithm:
+1. If `state.configPresetApplied` is already true → early return (no-op; sentinel protects from
+   re-seed on every restart).
+2. Check `provides` — true only if at least one field is non-null. A-alone (all-null) → `provides =
+   false` → return without stamping the sentinel. This is the key property: an A-alone install never
+   stamps the sentinel, so installing B afterward still seeds correctly.
+3. Per-field "== neutral default" guard: each field is seeded only if the persisted value still equals
+   A's neutral baseline (`bambooBuildVariableName.isNullOrBlank()`, `quickClipboardChips ==
+   NEUTRAL_QUICK_CLIPBOARD_CHIPS`, `defaultTargetBranch == NEUTRAL_DEFAULT_TARGET_BRANCH`,
+   `copyrightTemplate.isNullOrBlank()`). User-edited values and upgrader values already seeded by
+   `SettingsMigration` are never clobbered.
+4. Set `state.configPresetApplied = true`.
+
+**Blanked `:core` defaults.** Two company-convention values blanked in A's `PluginSettings.State`
+(neutral defaults, no migration bump needed — see rationale below):
+- `bambooBuildVariableName` → `""` (blank string; blank sentinel in seeder checks `isNullOrBlank()`).
+- `quickClipboardChips` init list → `NEUTRAL_QUICK_CLIPBOARD_CHIPS` (5 generic artefacts: pr.url,
+  build.url, ticket.id, ai.changeSummary, ai.ticketSummary; always persisted via the `init` block so
+  no `BaseState`-omit-default concern arises).
+
+**No `SettingsMigration` version bump.** The blanked defaults do not require a migration increment
+because: (a) `quickClipboardChips` is always written via the `init` block (`BaseState` never omits
+it — it's always present in XML); (b) `bambooBuildVariableName` is blank and the automation readers
+already fall back to `"DockerTagsAsJSON"` at the use-site; (c) no upgrader would have the old
+in-memory default (they persisted the old value the first time they saved settings). Existing B
+installs already stamped the sentinel at 2c startup — no double-seed on re-launch.
+
+**`CompanyBConfigPreset` (Plugin B, `order = 0`).** `plugin-b/.../CompanyBConfigPreset.kt`.
+Supplies company default values for fresh installs:
+- `bambooBuildVariableName()` → `"DockerTagsAsJSON"`
+- `quickClipboardChips()` → 8-entry company list (docker.tag, docker.tagsJson, pr.url, build.url,
+  automation.url, ticket.id, ai.changeSummary, ai.ticketSummary)
+- `defaultTargetBranch()` → `"develop"` (see DECISION 3 below)
+- `copyrightTemplate()` → **null** (see DECISION 2 below)
+
+**Phase 2 COMPLETE.** Phases 2a + 2b + 2c together satisfy the charter §7 / §11 "Phase 2 — Carve
+company-only → B" DoD: `:automation` and `:handover` are bundled by B only; `CopyrightFixService`
+year-logic is in A; the config preset (company default VALUES) is supplied by B via the `ConfigPreset`
+EP and applied one-shot at startup; A ships with fully neutral defaults.
+
+---
+
+### DECISIONS flagged for the user (Phase 2c)
+
+**DECISION 1 — Seed is one-shot per install (`configPresetApplied` sentinel), set only when a
+value-providing preset is present.** This makes fresh installs seed once, lets a B-installed-after-A
+case still seed (A-alone never stamps the sentinel), and stops curated-away company chips from being
+resurrected on restart. Trade-off: if the company later CHANGES a preset value (e.g. adds a new chip),
+existing installs that already seeded won't pick it up (the sentinel blocks re-seed). Reversible by
+bumping a preset-version int to re-apply. Confirmed acceptable.
+
+**DECISION 2 — `copyrightTemplate` is NOT seeded by B's preset.** The `ConfigPreset` EP supports it
+(`copyrightTemplate()` method exists); `CompanyBConfigPreset` returns null. Seeding a placeholder
+would insert wrong copyright text; seeding the real header text requires the company's actual header
+content (out-of-band). The company sets it in B's `HandoverConfigurable` settings UI; flip
+`CompanyBConfigPreset.copyrightTemplate()` to return the real header string when it is available.
+Confirmed.
+
+**DECISION 3 — `defaultTargetBranch="develop"` IS seeded for fresh A+B installs.** Spec §93 listed
+it as a B-preset value. Phase 1a deferred fresh-company-install restoration to B's preset (upgraders
+already received `"develop"` via the 1a migration; the seeder's guard skips them). This is the
+intended company default for new installs. Confirmed.

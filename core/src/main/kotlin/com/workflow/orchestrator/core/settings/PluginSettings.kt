@@ -591,8 +591,8 @@ class PluginSettings : SimplePersistentStateComponent<PluginSettings.State>(Stat
          * docker.tagsJson, automation.url). Plugin B extends this list via its
          * ConfigPreset EP (Phase 2c, Task 3 — ConfigPresetSeeder).
          *
-         * Referenced by [State.init] (by simple name) and by unit tests/Task 3 seeder
-         * as `PluginSettings.NEUTRAL_QUICK_CLIPBOARD_CHIPS`.
+         * Referenced by [State.init] and by unit tests/Task 3 seeder by qualified name
+         * `PluginSettings.NEUTRAL_QUICK_CLIPBOARD_CHIPS`.
          */
         val NEUTRAL_QUICK_CLIPBOARD_CHIPS = listOf(
             "pr.url",

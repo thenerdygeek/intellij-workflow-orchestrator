@@ -4,8 +4,12 @@
 > module (bundled by `:plugin-b` with `isTransitive=false`, kover coverage retained). Plugin A
 > does NOT ship it. Key moves in this carve:
 > - `CopyrightFixService` + `CopyrightFileEntry`/`CopyrightStatus` moved to `:core/copyright`
->   (generic year-logic stays in A; the company copyright template is a blank `:core` setting
->   that B will seed in Phase 2c).
+>   (generic year-logic stays in A; `copyrightTemplate` is a blank `:core` `PluginSettings`
+>   field that the company sets in `HandoverConfigurable` settings UI). The `ConfigPreset` EP
+>   (`com.workflow.orchestrator.configPreset`, Phase 2c) supports seeding it via
+>   `copyrightTemplate()`, but `CompanyBConfigPreset` returns null — seeding a placeholder would
+>   insert wrong copyright text; the real header must be supplied out-of-band (see DECISION 2 in
+>   spec §23).
 > - `HandoverConfigurable` moved INTO `:handover` (was `:core/settings`); now at
 >   `handover.settings.HandoverConfigurable`; registered by B's `plugin.xml`.
 > - Dead `PreReviewService` dropped.

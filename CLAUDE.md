@@ -15,7 +15,7 @@ Plugin ID: `com.workflow.orchestrator.plugin` | Kotlin 2.1.10 | Gradle + Intelli
 
 | Module | Purpose |
 |---|---|
-| `:core` | Auth, HTTP, settings, events, polling, tool window, PSI context, AI commits |
+| `:core` | Auth, HTTP, settings, events, polling, tool window, PSI context, AI commits — **Phase 2c**: `ConfigPreset` EP (`com.workflow.orchestrator.configPreset`) lets Plugin B supply company default VALUES (bamboo var, chips, default branch); `ConfigPresetSeeder` applies them one-shot + guarded at startup; A ships neutral defaults |
 | `:jira` | Sprint, branching, commit prefix, time tracking |
 | `:bamboo` | Build dashboard, log parsing, CVE remediation |
 | `:sonar` | Coverage markers, ExternalAnnotator, fix intention |
