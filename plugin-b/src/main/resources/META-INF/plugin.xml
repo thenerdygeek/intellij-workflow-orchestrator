@@ -11,6 +11,7 @@
     <extensions defaultExtensionNs="com.workflow.orchestrator">
         <workflowConfig implementation="com.workflow.orchestrator.companyb.CompanyBWorkflowConfig"/>
         <agentToolContributor implementation="com.workflow.orchestrator.companyb.CompanyBToolContributor"/>
+        <configPreset implementation="com.workflow.orchestrator.companyb.CompanyBConfigPreset"/>
         <tabProvider implementation="com.workflow.orchestrator.automation.ui.AutomationTabProvider"/>
         <tabProvider implementation="com.workflow.orchestrator.handover.ui.HandoverTabProvider"/>
     </extensions>

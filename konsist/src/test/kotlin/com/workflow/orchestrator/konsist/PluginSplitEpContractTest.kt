@@ -99,6 +99,15 @@ class PluginSplitEpContractTest {
     }
 
     @Test
+    fun `B registers CompanyBConfigPreset as the company-values preset impl`() {
+        assertTrue(
+            bXml.contains("com.workflow.orchestrator.companyb.CompanyBConfigPreset"),
+            "plugin-b plugin.xml must register CompanyBConfigPreset so the configPreset EP delivers " +
+                "company default VALUES (bamboo var, clipboard chips, develop branch) to A's seeder.",
+        )
+    }
+
+    @Test
     fun `B hard-depends on A`() {
         val hardDepends = Regex("<depends>([^<]*)</depends>", RegexOption.DOT_MATCHES_ALL)
             .findAll(bXml).map { it.groupValues[1].trim() }.toList()
