@@ -2,6 +2,7 @@ package com.workflow.orchestrator.core.ai.protocol
 
 import com.workflow.orchestrator.core.ai.LlmProvider
 import com.workflow.orchestrator.core.api.InternalApi
+import com.workflow.orchestrator.core.config.ConfigPreset
 import com.workflow.orchestrator.core.services.CiService
 import com.workflow.orchestrator.core.services.VcsHostClient
 import org.junit.jupiter.api.Assertions.assertFalse
@@ -16,6 +17,7 @@ class SeamApiStabilityTest {
         LlmProvider::class.java,
         CiService::class.java,
         VcsHostClient::class.java,
+        ConfigPreset::class.java,
     )
 
     @Test fun `seam interfaces are public, not internal, and @InternalApi-annotated`() {

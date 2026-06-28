@@ -69,6 +69,10 @@
             interface="com.workflow.orchestrator.core.config.WorkflowConfig"
             dynamic="true"/>
         <extensionPoint
+            qualifiedName="com.workflow.orchestrator.configPreset"
+            interface="com.workflow.orchestrator.core.config.ConfigPreset"
+            dynamic="true"/>
+        <extensionPoint
             qualifiedName="com.workflow.orchestrator.featureRegistry"
             interface="com.workflow.orchestrator.core.capability.FeatureRegistry"
             dynamic="true"/>
@@ -451,6 +455,7 @@
             implementation="com.workflow.orchestrator.core.auth.DefaultAuthProvider"/>
         <workflowConfig
             implementation="com.workflow.orchestrator.core.config.DefaultWorkflowConfig"/>
+        <configPreset implementation="com.workflow.orchestrator.core.config.DefaultConfigPreset"/>
         <featureRegistry
             implementation="com.workflow.orchestrator.core.capability.DefaultFeatureRegistry"/>
         <branchNameAiGenerator

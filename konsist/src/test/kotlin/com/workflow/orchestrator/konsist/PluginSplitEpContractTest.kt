@@ -63,6 +63,24 @@ class PluginSplitEpContractTest {
     }
 
     @Test
+    fun `A declares the configPreset EP`() {
+        assertTrue(
+            aXml.contains("qualifiedName=\"com.workflow.orchestrator.configPreset\""),
+            "Root plugin.xml must declare the configPreset extension point — it is the application-level " +
+                "seam for Plugin B to supply company default VALUES into A's neutral settings.",
+        )
+    }
+
+    @Test
+    fun `A registers DefaultConfigPreset as the no-op fallback impl`() {
+        assertTrue(
+            aXml.contains("com.workflow.orchestrator.core.config.DefaultConfigPreset"),
+            "Root plugin.xml must register DefaultConfigPreset (A's no-op fallback so B's order=0 " +
+                "implementation wins when registered).",
+        )
+    }
+
+    @Test
     fun `B registers CompanyBWorkflowConfig as the override impl`() {
         assertTrue(
             bXml.contains("com.workflow.orchestrator.companyb.CompanyBWorkflowConfig"),

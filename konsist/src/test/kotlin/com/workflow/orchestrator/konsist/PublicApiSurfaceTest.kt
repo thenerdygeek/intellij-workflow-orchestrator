@@ -8,6 +8,7 @@ class PublicApiSurfaceTest {
     private val bFacingEpInterfaces = listOf(
         "AgentToolContributor",
         "WorkflowConfig",
+        "ConfigPreset",
         "AuthProvider",
         "FeatureRegistry",
         "JiraTicketProvider",
