@@ -369,8 +369,7 @@ class WorkflowToolWindowFactory : ToolWindowFactory, DumbAware {
         DefaultTab("Sprint", 0, "No tickets assigned.\nConnect to Jira in Settings to get started."),
         DefaultTab("PR", 1, "No pull requests found.\nConnect to Bitbucket in Settings."),
         DefaultTab("Build", 2, "No builds found.\nPush your changes to trigger a CI build."),
-        DefaultTab("Quality", 3, "No quality data available.\nConnect to SonarQube in Settings."),
-        DefaultTab("Handover", 5, "No active task to hand over.\nStart work on a ticket first.")
+        DefaultTab("Quality", 3, "No quality data available.\nConnect to SonarQube in Settings.")
     )
 
     private fun currentProviders(): Map<String, WorkflowTabProvider> =
