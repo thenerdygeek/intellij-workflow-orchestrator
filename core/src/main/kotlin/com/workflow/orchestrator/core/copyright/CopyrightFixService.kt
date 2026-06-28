@@ -127,9 +127,9 @@ class CopyrightFixService {
         content: String,
         currentYear: Int = Year.now().value
     ): CopyrightFileEntry {
-        log.debug("[Copyright] Analyzing file: $filePath")
+        log.debug("[Handover:Copyright] Analyzing file: $filePath")
         if (!hasCopyrightHeader(content)) {
-            log.info("[Copyright] Missing copyright header: $filePath")
+            log.info("[Handover:Copyright] Missing copyright header: $filePath")
             return CopyrightFileEntry(
                 filePath = filePath,
                 status = CopyrightStatus.MISSING_HEADER
@@ -140,14 +140,11 @@ class CopyrightFixService {
         val updated = updateYearInHeader(headerRegion, currentYear)
 
         return if (updated == headerRegion) {
-            log.debug("[Copyright] Copyright OK: $filePath")
+            log.debug("[Handover:Copyright] Copyright OK: $filePath")
             CopyrightFileEntry(filePath = filePath, status = CopyrightStatus.OK)
         } else {
             val yearExprMatch = FULL_YEAR_EXPR.find(headerRegion)
-            log.info(
-                "[Copyright] Year outdated in $filePath: ${yearExprMatch?.value} -> " +
-                    "${yearExprMatch?.let { consolidateYears(it.value, currentYear) }}"
-            )
+            log.info("[Handover:Copyright] Year outdated in $filePath: ${yearExprMatch?.value} -> ${yearExprMatch?.let { consolidateYears(it.value, currentYear) }}")
             CopyrightFileEntry(
                 filePath = filePath,
                 status = CopyrightStatus.YEAR_OUTDATED,
