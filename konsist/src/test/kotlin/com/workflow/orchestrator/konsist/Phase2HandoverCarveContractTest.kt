@@ -98,7 +98,8 @@ class Phase2HandoverCarveContractTest {
 
     @Test
     fun `no A-resident src-main Kotlin file references the B-only workflow-handover notification group`() {
-        val aModules = listOf("core", "jira", "bamboo", "sonar", "pullrequest", "automation", "agent", "web", "document")
+        // A-resident modules only: exclude BOTH carved B-bundled modules (automation [2a] + handover [2b]).
+        val aModules = listOf("core", "jira", "bamboo", "sonar", "pullrequest", "agent", "web", "document")
         val hits = mutableListOf<String>()
         for (module in aModules) {
             val srcMain = File(repoRoot, "$module/src/main")

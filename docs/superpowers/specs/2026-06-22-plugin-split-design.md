@@ -366,15 +366,16 @@ company-proprietary shape; it was relocated out of the handover-adjacent block i
 
 **"Handover" default tab removed from A.** `WorkflowToolWindowFactory.defaultTabs` drops the hard-coded
 "Handover" tab so it surfaces only as B's extension-provided `HandoverTabProvider` (registered via B's
-`plugin.xml`). B's descriptor also registers the project/app services, `HandoverConfigurable` settings
-page, and the handover startup activities.
+`plugin.xml`). B's descriptor also registers the project services (all `@Service(PROJECT)`),
+`HandoverConfigurable` settings page, and the handover startup activity.
 
 **`quickClipboardChips` docker defaults still in `:core` `PluginSettings` — deferred to 2c** (blank in A
 + seed in B preset together; same rationale as `bambooBuildVariableName` in 2a). DO NOT cut OSS-A
 (Phase 5) before 2c blanks it.
 
-**Git4Idea compile-only for `:handover`.** `:handover` uses `ChangeListManager` (a platform VCS API,
-always available) rather than Git4Idea-specific classes at runtime, so `git4idea` is `compileOnly` in
-`:handover`'s build. B therefore needs no Git4Idea runtime dep beyond what A already bundles.
+**Git4Idea is a `bundledPlugin` in `:handover`'s own build (B needs none).** `:handover` declares
+`bundledPlugin("Git4Idea")` to compile, but uses only the platform `ChangeListManager` (not
+`git4idea.*`) at runtime. B bundles handover's pre-compiled classes non-transitively (it does not
+recompile them), so B needs no Git4Idea `<depends>` beyond what A already provides.
 **PENDING-USER runIde smoke** confirms: no `LinkageError`/`NoClassDefFoundError` in `idea.log` when the
 Handover tab loads and `CopyrightFixCard` rescans changed files via `ChangeListManager.allChanges`.

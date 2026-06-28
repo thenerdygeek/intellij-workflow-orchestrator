@@ -11,13 +11,15 @@
 > - Dead `PreReviewService` dropped.
 > - Generic `PrService` stays in A (`:core.bitbucket`), relocated out of the handover block.
 > - "Handover" default tab removed from A's `WorkflowToolWindowFactory.defaultTabs`; B registers
->   `HandoverTabProvider` via the `workflowTab` EP.
+>   `HandoverTabProvider` via the `com.workflow.orchestrator.tabProvider` EP.
 > - `quickClipboardChips` docker defaults still in `:core` `PluginSettings` — deferred to Phase 2c
 >   (blank in A + seed in B preset together).
-> - Git4Idea is `compileOnly` for `:handover` (runtime uses platform `ChangeListManager`); B needs
->   no extra Git4Idea runtime dep — PENDING-USER runIde smoke to confirm.
-> - B's `plugin.xml` registers the tab, project/app services, settings configurable, and startup
->   activities for this module.
+> - Git4Idea is a `bundledPlugin` in `:handover`'s OWN build (handover compiles against it). B bundles
+>   handover's pre-compiled classes non-transitively and does not recompile them, and handover's only
+>   runtime VCS use is the platform `ChangeListManager` (not `git4idea.*`), so B needs no Git4Idea
+>   `<depends>` — PENDING-USER runIde smoke to confirm.
+> - B's `plugin.xml` registers the tab, the project services (all `@Service(PROJECT)`), the settings
+>   configurable, the `workflow.handover` notification group, and the startup activity for this module.
 
 Task completion workflow: Jira closure, copyright enforcement, QA handover.
 
