@@ -423,8 +423,10 @@ Applied in `SettingsMigrationStartupActivity` AFTER the `SettingsMigration` runs
 because: (a) `quickClipboardChips` is always written via the `init` block (`BaseState` never omits
 it — it's always present in XML); (b) `bambooBuildVariableName` is blank and the automation readers
 already fall back to `"DockerTagsAsJSON"` at the use-site; (c) no upgrader would have the old
-in-memory default (they persisted the old value the first time they saved settings). Existing B
-installs already stamped the sentinel at 2c startup — no double-seed on re-launch.
+in-memory default (they persisted the old value the first time they saved settings). After an
+install's first 2c-aware startup with B present, the sentinel (`configPresetApplied`) is set, so
+subsequent re-launches never double-seed (and a user who curates a seeded value away keeps their
+choice). (`CompanyBConfigPreset` is new in 2c, so there are no pre-2c B installs to migrate.)
 
 **`CompanyBConfigPreset` (Plugin B, `order = 0`).** `plugin-b/.../CompanyBConfigPreset.kt`.
 Supplies company default values for fresh installs:

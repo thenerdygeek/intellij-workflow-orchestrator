@@ -132,9 +132,12 @@ class PluginSettings : SimplePersistentStateComponent<PluginSettings.State>(Stat
         /**
          * Bamboo plan variable carrying the Docker tags JSON payload.
          * Blank in Plugin A (OSS default); the company value ("DockerTagsAsJSON") is supplied
-         * by Plugin B's ConfigPreset EP (Phase 2c) and applied by ConfigPresetSeeder (Task 3).
-         * All `:automation` readers use `?.takeIf { isNotBlank() } ?: "DockerTagsAsJSON"` as a
-         * blank-safe fallback, so behaviour is preserved even without a preset.
+         * by Plugin B's ConfigPreset EP (Phase 2c) and applied by ConfigPresetSeeder.
+         * The `:automation` trigger-payload readers (QueueService, TagBuilderService,
+         * SuiteConfigPanel, TagStagingPanel) use `?.takeIf { isNotBlank() } ?: "DockerTagsAsJSON"`
+         * as a blank-safe fallback, so behaviour is preserved even without a preset. (The
+         * AutomationConfigurable settings-display getter uses a bare `?:` — harmless: it is B-only
+         * and the seeder sets a non-blank value on first launch.)
          */
         var bambooBuildVariableName by string("")
 
@@ -341,7 +344,8 @@ class PluginSettings : SimplePersistentStateComponent<PluginSettings.State>(Stat
         /**
          * Ordered list of chip keys shown in the Handover → Share quick-clipboard grid.
          * Each key maps to a runtime value provider (e.g. "docker.tag" → latest Docker tag).
-         * The default 8-item list covers the most commonly shared artefacts.
+         * Plugin A's OSS default is the neutral baseline [NEUTRAL_QUICK_CLIPBOARD_CHIPS] (5 generic
+         * keys); Plugin B's ConfigPreset seeds the full company list (adds docker.* / automation.url).
          *
          * Settings UI for this field is added in T25. The list is persisted via
          * [by list<String>()][com.intellij.openapi.components.BaseState] so user
