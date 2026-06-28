@@ -1,4 +1,4 @@
-package com.workflow.orchestrator.handover.service
+package com.workflow.orchestrator.core.copyright
 
 import com.intellij.lang.LanguageCommenters
 import com.intellij.openapi.components.Service
@@ -9,8 +9,6 @@ import com.intellij.openapi.fileTypes.LanguageFileType
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.roots.ProjectFileIndex
 import com.intellij.openapi.vfs.VirtualFile
-import com.workflow.orchestrator.handover.model.CopyrightFileEntry
-import com.workflow.orchestrator.handover.model.CopyrightStatus
 import org.jetbrains.annotations.TestOnly
 import java.time.Year
 import java.util.concurrent.ConcurrentHashMap

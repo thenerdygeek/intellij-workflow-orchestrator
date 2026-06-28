@@ -51,20 +51,6 @@ data class BuildSummary(
     val planKey: String
 )
 
-// Copyright models
-data class CopyrightFileEntry(
-    val filePath: String,
-    val status: CopyrightStatus,
-    val oldYear: String? = null,
-    val newYear: String? = null
-)
-
-enum class CopyrightStatus {
-    OK,
-    YEAR_OUTDATED,
-    MISSING_HEADER
-}
-
 // Clipboard payload
 data class ClipboardPayload(
     val dockerTags: Map<String, String>,

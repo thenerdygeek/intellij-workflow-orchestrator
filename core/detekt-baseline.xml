@@ -135,6 +135,8 @@
     <ID>ArgumentListWrapping:CommitMessagePromptBuilder.kt$CommitMessagePromptBuilder$("- scope = domain area (auth, billing, pr-list); prefer the chosen ticket's component or label if it matches; NEVER use file paths")</ID>
     <ID>ArgumentListWrapping:CommitMessagePromptBuilder.kt$CommitMessagePromptBuilder$("RECENT COMMITS (for tone and vocabulary only — the FORMAT and TYPES sections above are authoritative):")</ID>
     <ID>ArgumentListWrapping:ConnectionsConfigurable.kt$ConnectionsConfigurable$("Open Connection settings")</ID>
+    <ID>ArgumentListWrapping:CopyrightFixService.kt$CopyrightFixService$("[Handover:Copyright] Year outdated in $filePath: ${yearExprMatch?.value} -> ${yearExprMatch?.let { consolidateYears(it.value, currentYear) }}")</ID>
+    <ID>ArgumentListWrapping:CopyrightFixService.kt$CopyrightFixService$(it.value, currentYear)</ID>
     <ID>ArgumentListWrapping:DefaultReviewerConditionTest.kt$DefaultReviewerConditionTest$( id = id, displayId = id, type = RefMatcherTypeDescriptor(id = type, name = type), )</ID>
     <ID>ArgumentListWrapping:DefaultReviewerConditionTest.kt$DefaultReviewerConditionTest$(RefMatcherType.ANY_REF, parsed[0].sourceRefMatcher.matcherType, "Unknown matcher types must fall back to ANY_REF — never crash on a Bitbucket upgrade")</ID>
     <ID>ArgumentListWrapping:DefaultReviewerConditionTest.kt$DefaultReviewerConditionTest$(listOf("carol"), users.map { it.name }, "Only the feature→master condition should match — alice/bob/dave belong to other conditions")</ID>
@@ -273,6 +275,12 @@
     <ID>ArgumentListWrapping:PrDescriptionPromptBuilderTest.kt$PrDescriptionPromptBuilderTest$(result.contains("Update dependencies"), "AVOID list should name 'Update dependencies' as a bad example")</ID>
     <ID>ArgumentListWrapping:PrService.kt$PrService$("${file.nameWithoutExtension} (${psi.classAnnotations.joinToString(", ") { "@$it" }})")</ID>
     <ID>ArgumentListWrapping:PrService.kt$PrService$(", ")</ID>
+    <ID>ArgumentListWrapping:PrServiceTemplateTest.kt$PrServiceTemplateTest$("PROJ-123 (feature/PROJ-123-fix)", PrTitleRenderer.render("{ticketId} ({branch})", "PROJ-123", "Fix", "feature/PROJ-123-fix", 120))</ID>
+    <ID>ArgumentListWrapping:PrServiceTemplateTest.kt$PrServiceTemplateTest$("PROJ-123: Fix login bug", PrTitleRenderer.render("{ticketId}: {summary}", "PROJ-123", "Fix login bug", "feature/PROJ-123", 120))</ID>
+    <ID>ArgumentListWrapping:PrServiceTemplateTest.kt$PrServiceTemplateTest$("[PROJ-123] Fix login bug", PrTitleRenderer.render("[{ticketId}] {summary}", "PROJ-123", "Fix login bug", "feature/PROJ-123", 120))</ID>
+    <ID>ArgumentListWrapping:PrServiceTemplateTest.kt$PrServiceTemplateTest$("[{ticketId}] {summary}", "PROJ-123", "Fix login bug", "feature/PROJ-123", 120)</ID>
+    <ID>ArgumentListWrapping:PrServiceTemplateTest.kt$PrServiceTemplateTest$("{ticketId} ({branch})", "PROJ-123", "Fix", "feature/PROJ-123-fix", 120)</ID>
+    <ID>ArgumentListWrapping:PrServiceTemplateTest.kt$PrServiceTemplateTest$("{ticketId}: {summary}", "PROJ-123", "Fix login bug", "feature/PROJ-123", 120)</ID>
     <ID>ArgumentListWrapping:PrTitlePromptBuilderTest.kt$PrTitlePromptBuilderTest$(result.contains("Imperative mood") || result.contains("imperative mood"), "Prompt should specify imperative mood")</ID>
     <ID>ArgumentListWrapping:PrTitlePromptBuilderTest.kt$PrTitlePromptBuilderTest$(result.contains("Output ONLY the title") || result.contains("Output the title only"), "Prompt should instruct model to output only the title")</ID>
     <ID>ArgumentListWrapping:RawApiTraceInterceptorTest.kt$RawApiTraceInterceptorTest$(true, RawApiTraceConfig.redactPromptBody, "redactPromptBody must default to true (audit finding core:F-3)")</ID>
@@ -538,6 +546,7 @@
     <ID>MagicNumber:ConnectionsConfigurable.kt$ConnectionsConfigurable$40</ID>
     <ID>MagicNumber:CopyrightCheck.kt$CopyrightCheck$30</ID>
     <ID>MagicNumber:CopyrightCheckService.kt$CopyrightCheckService$10</ID>
+    <ID>MagicNumber:CopyrightFixService.kt$CopyrightFixService$30</ID>
     <ID>MagicNumber:CrossIdeDelegationConfigurable.kt$CrossIdeDelegationConfigurable$10</ID>
     <ID>MagicNumber:CrossIdeDelegationConfigurable.kt$CrossIdeDelegationConfigurable$5</ID>
     <ID>MagicNumber:CrossIdeDelegationConfigurable.kt$CrossIdeDelegationConfigurable$600</ID>
@@ -873,6 +882,8 @@
     <ID>MaximumLineLength:ChatCompletionModels.kt$ChatCompletionRequest$ </ID>
     <ID>MaximumLineLength:CommitMessagePromptBuilder.kt$CommitMessagePromptBuilder$ </ID>
     <ID>MaximumLineLength:ConnectionsConfigurable.kt$ConnectionsConfigurable$ </ID>
+    <ID>MaximumLineLength:CopyrightFixService.kt$CopyrightFixService$ </ID>
+    <ID>MaximumLineLength:CopyrightFixServiceTest.kt$CopyrightFixServiceTest$ </ID>
     <ID>MaximumLineLength:CredentialStoreTest.kt$CredentialStoreTest$ </ID>
     <ID>MaximumLineLength:DefaultReviewerConditionTest.kt$DefaultReviewerConditionTest$ </ID>
     <ID>MaximumLineLength:DelegationClient.kt$DelegationClient$ </ID>
@@ -907,6 +918,7 @@
     <ID>MaximumLineLength:PrDescriptionPromptBuilderTest.kt$PrDescriptionPromptBuilderTest$ </ID>
     <ID>MaximumLineLength:PrReviewFindingsStore.kt$PrReviewFindingsStore$ </ID>
     <ID>MaximumLineLength:PrService.kt$PrService$ </ID>
+    <ID>MaximumLineLength:PrServiceTemplateTest.kt$PrServiceTemplateTest$ </ID>
     <ID>MaximumLineLength:PromptBodyRedactor.kt$PromptBodyRedactor$ </ID>
     <ID>MaximumLineLength:RepoContextResolver.kt$RepoContextResolver$ </ID>
     <ID>MaximumLineLength:RepositoriesConfigurable.kt$RepositoriesConfigurable$ </ID>
@@ -989,6 +1001,7 @@
     <ID>MultiLineIfElse:WorkflowEventMirror.kt$WorkflowEventMirror$null</ID>
     <ID>NoBlankLineBeforeRbrace:BitbucketBranchClient.kt$BitbucketBranchClient$ </ID>
     <ID>NoBlankLineBeforeRbrace:ConnectionsConfigurable.kt$ConnectionsConfigurable$ </ID>
+    <ID>NoBlankLineBeforeRbrace:CopyrightFixServiceTest.kt$CopyrightFixServiceTest$ </ID>
     <ID>NoBlankLineBeforeRbrace:GenerateCommitMessageAction.kt$GenerateCommitMessageAction$ </ID>
     <ID>NoBlankLineBeforeRbrace:MessageSanitizerTest.kt$MessageSanitizerTest$ </ID>
     <ID>NoConsecutiveBlankLines:SourcegraphCompletionsStreamClient.kt$ </ID>
@@ -1078,6 +1091,7 @@
     <ID>NoWildcardImports:CopyrightCheckServiceTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
     <ID>NoWildcardImports:CopyrightCheckTest.kt$import io.mockk.*</ID>
     <ID>NoWildcardImports:CopyrightCheckTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:CopyrightFixServiceTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
     <ID>NoWildcardImports:CredentialStoreTest.kt$import io.mockk.*</ID>
     <ID>NoWildcardImports:CredentialStoreTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
     <ID>NoWildcardImports:CrossIdeDelegationConfigurableAcceptWindowTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
@@ -1122,6 +1136,8 @@
     <ID>NoWildcardImports:OpenAiCompatBrain.kt$import com.workflow.orchestrator.core.ai.dto.*</ID>
     <ID>NoWildcardImports:PluginSettings.kt$import com.intellij.openapi.components.*</ID>
     <ID>NoWildcardImports:PrReviewFindingsStoreImplTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:PrServiceTemplateTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:PrServiceTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
     <ID>NoWildcardImports:ProjectIdentifierTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
     <ID>NoWildcardImports:PsiContextEnricherTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
     <ID>NoWildcardImports:RawApiTraceInterceptorTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
@@ -1306,6 +1322,9 @@
     <ID>UseCheckOrError:BuildProblemsServiceImplTest.kt$BuildProblemsServiceImplTest.&lt;no name provided>$throw IllegalStateException("probe broken")</ID>
     <ID>UseCheckOrError:LlmBrainFactory.kt$LlmBrainFactory$throw IllegalStateException( "No models available from Sourcegraph. Check your connection and token in Settings > Workflow Orchestrator > General." )</ID>
     <ID>UseCheckOrError:SourcegraphCompletionsStreamClient.kt$SourcegraphCompletionsStreamClient$throw IllegalStateException("no Sourcegraph token configured")</ID>
+    <ID>VariableNaming:CopyrightFixService.kt$CopyrightFixService$private val FULL_YEAR_EXPR = Regex("""(?:(?:19|20)\d{2})(?:\s*[-–,]\s*(?:(?:19|20)\d{2}))*""")</ID>
+    <ID>VariableNaming:CopyrightFixService.kt$CopyrightFixService$private val YEAR_PATTERN = Regex("""\b((?:19|20)\d{2})\b""")</ID>
+    <ID>VariableNaming:CopyrightFixService.kt$CopyrightFixService$private val YEAR_RANGE_PATTERN = Regex("""((?:19|20)\d{2})\s*[-–]\s*((?:19|20)\d{2})""")</ID>
     <ID>VariableNaming:RawApiTraceInterceptor.kt$RawApiTraceInterceptor$private val TIME_FMT: DateTimeFormatter = DateTimeFormatter.ofPattern("HHmmss")</ID>
     <ID>VariableNaming:SessionsPanel.kt$SessionsPanel$private val COLUMNS = arrayOf("Time", "Task", "Model", "Tokens In", "Tokens Out", "Est. Cost")</ID>
     <ID>VariableNaming:SessionsPanel.kt$SessionsPanel$private val MAX_SESSIONS = 200</ID>
@@ -1327,6 +1346,7 @@
     <ID>WildcardImport:CopyrightCheckServiceTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
     <ID>WildcardImport:CopyrightCheckTest.kt$import io.mockk.*</ID>
     <ID>WildcardImport:CopyrightCheckTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:CopyrightFixServiceTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
     <ID>WildcardImport:CredentialStoreTest.kt$import io.mockk.*</ID>
     <ID>WildcardImport:CredentialStoreTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
     <ID>WildcardImport:CrossIdeDelegationConfigurableAcceptWindowTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
@@ -1371,6 +1391,8 @@
     <ID>WildcardImport:OpenAiCompatBrain.kt$import com.workflow.orchestrator.core.ai.dto.*</ID>
     <ID>WildcardImport:PluginSettings.kt$import com.intellij.openapi.components.*</ID>
     <ID>WildcardImport:PrReviewFindingsStoreImplTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:PrServiceTemplateTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:PrServiceTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
     <ID>WildcardImport:ProjectIdentifierTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
     <ID>WildcardImport:PsiContextEnricherTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
     <ID>WildcardImport:RawApiTraceInterceptorTest.kt$import org.junit.jupiter.api.Assertions.*</ID>

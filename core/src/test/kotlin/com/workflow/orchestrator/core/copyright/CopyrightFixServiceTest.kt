@@ -1,6 +1,5 @@
-package com.workflow.orchestrator.handover.service
+package com.workflow.orchestrator.core.copyright
 
-import com.workflow.orchestrator.handover.model.CopyrightStatus
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Test
 

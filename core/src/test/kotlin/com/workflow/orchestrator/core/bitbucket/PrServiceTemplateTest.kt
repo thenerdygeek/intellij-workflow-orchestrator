@@ -1,8 +1,7 @@
-package com.workflow.orchestrator.handover.service
+package com.workflow.orchestrator.core.bitbucket
 
-import com.workflow.orchestrator.core.bitbucket.PrTitleRenderer
-import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.Assertions.*
+import org.junit.jupiter.api.Test
 
 class PrServiceTemplateTest {
     @Test

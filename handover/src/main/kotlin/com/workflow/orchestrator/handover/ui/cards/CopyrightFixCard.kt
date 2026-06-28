@@ -14,12 +14,12 @@ import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBList
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.util.ui.JBUI
+import com.workflow.orchestrator.core.copyright.CopyrightFileEntry
+import com.workflow.orchestrator.core.copyright.CopyrightFixService
+import com.workflow.orchestrator.core.copyright.CopyrightStatus
 import com.workflow.orchestrator.core.notifications.WorkflowNotificationService
 import com.workflow.orchestrator.core.settings.PluginSettings
 import com.workflow.orchestrator.core.ui.StatusColors
-import com.workflow.orchestrator.handover.model.CopyrightFileEntry
-import com.workflow.orchestrator.handover.model.CopyrightStatus
-import com.workflow.orchestrator.handover.service.CopyrightFixService
 import com.workflow.orchestrator.handover.service.HandoverStateService
 import com.workflow.orchestrator.handover.ui.cards.handoverPanelHeader
 import kotlinx.coroutines.CoroutineScope

@@ -337,7 +337,7 @@
         <projectService
             serviceImplementation="com.workflow.orchestrator.handover.service.HandoverStateService"/>
         <projectService
-            serviceImplementation="com.workflow.orchestrator.handover.service.CopyrightFixService"/>
+            serviceImplementation="com.workflow.orchestrator.core.copyright.CopyrightFixService"/>
         <projectService
             serviceImplementation="com.workflow.orchestrator.handover.service.PreReviewService"/>
         <projectService
