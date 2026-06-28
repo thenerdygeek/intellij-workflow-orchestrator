@@ -72,14 +72,14 @@ sealed class WorkflowEvent {
         val estimatedWaitMs: Long?
     ) : WorkflowEvent()
 
-    /** Emitted by :handover when a PR is created via Bitbucket. */
+    /** Emitted by :pullrequest when a PR is created via Bitbucket. */
     data class PullRequestCreated(
         val prUrl: String,
         val prNumber: Int,
         val ticketId: String
     ) : WorkflowEvent()
 
-    /** Emitted by :handover when a Jira closure comment is posted. */
+    /** Emitted by :handover (Plugin B) when a Jira closure comment is posted. */
     data class JiraCommentPosted(
         val ticketId: String,
         val commentId: String
@@ -91,7 +91,7 @@ sealed class WorkflowEvent {
     }
 
     /**
-     * Emitted by :handover when the user proceeds with an action despite one or more
+     * Emitted by :handover (Plugin B) when the user proceeds with an action despite one or more
      * soft-gate checks having failed (e.g. quality gate not passed, suite not green).
      */
     data class HandoverOverride(
@@ -102,7 +102,7 @@ sealed class WorkflowEvent {
     ) : WorkflowEvent()
 
     /**
-     * Emitted by :handover when the user copies a quick-value chip to the clipboard.
+     * Emitted by :handover (Plugin B) when the user copies a quick-value chip to the clipboard.
      * Used for usage telemetry.
      */
     data class HandoverChipCopied(

@@ -127,9 +127,9 @@ class CopyrightFixService {
         content: String,
         currentYear: Int = Year.now().value
     ): CopyrightFileEntry {
-        log.debug("[Handover:Copyright] Analyzing file: $filePath")
+        log.debug("[Copyright] Analyzing file: $filePath")
         if (!hasCopyrightHeader(content)) {
-            log.info("[Handover:Copyright] Missing copyright header: $filePath")
+            log.info("[Copyright] Missing copyright header: $filePath")
             return CopyrightFileEntry(
                 filePath = filePath,
                 status = CopyrightStatus.MISSING_HEADER
@@ -140,11 +140,14 @@ class CopyrightFixService {
         val updated = updateYearInHeader(headerRegion, currentYear)
 
         return if (updated == headerRegion) {
-            log.debug("[Handover:Copyright] Copyright OK: $filePath")
+            log.debug("[Copyright] Copyright OK: $filePath")
             CopyrightFileEntry(filePath = filePath, status = CopyrightStatus.OK)
         } else {
             val yearExprMatch = FULL_YEAR_EXPR.find(headerRegion)
-            log.info("[Handover:Copyright] Year outdated in $filePath: ${yearExprMatch?.value} -> ${yearExprMatch?.let { consolidateYears(it.value, currentYear) }}")
+            log.info(
+                "[Copyright] Year outdated in $filePath: ${yearExprMatch?.value} -> " +
+                    "${yearExprMatch?.let { consolidateYears(it.value, currentYear) }}"
+            )
             CopyrightFileEntry(
                 filePath = filePath,
                 status = CopyrightStatus.YEAR_OUTDATED,
@@ -157,8 +160,8 @@ class CopyrightFixService {
     companion object {
         /**
          * Number of lines scanned from the file header for copyright detection and year update.
-         * Must be kept in sync with [CopyrightFixCard.applyFixes] which uses the same window
-         * to reassemble the file after patching.
+         * Must be kept in sync with `CopyrightFixCard.applyFixes` (in :handover) which uses the
+         * same window to reassemble the file after patching.
          */
         const val HEADER_SCAN_LINES = 30
 

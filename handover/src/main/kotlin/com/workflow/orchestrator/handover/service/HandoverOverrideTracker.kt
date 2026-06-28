@@ -14,8 +14,8 @@ import java.time.temporal.ChronoUnit
 /**
  * Project-scoped service that subscribes to [WorkflowEvent.HandoverOverride] events
  * and persists their timestamps in [PluginSettings.State.handoverOverrideLog] as
- * ISO-8601 strings. This allows [com.workflow.orchestrator.core.settings.HandoverConfigurable]
- * (in `:core`) to read the 30-day count without creating a cross-module reference.
+ * ISO-8601 strings. This allows [com.workflow.orchestrator.handover.settings.HandoverConfigurable]
+ * to read the 30-day count without creating a cross-module reference to `:core`.
  *
  * All mutations and reads of [PluginSettings.State.handoverOverrideLog] are guarded by
  * `synchronized` on the list instance to prevent [java.util.ConcurrentModificationException]

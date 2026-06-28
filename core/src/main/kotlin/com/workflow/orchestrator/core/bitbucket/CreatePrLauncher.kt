@@ -6,7 +6,7 @@ import kotlinx.coroutines.CoroutineScope
 
 /**
  * Extension point for cross-module PR creation delegation.
- * Implemented by the :pullrequest module; consumed by :bamboo, :handover, and the agent
+ * Implemented by the :pullrequest module; consumed by :bamboo, :handover (Plugin B), and the agent
  * without a compile-time dependency on :pullrequest.
  *
  * [launch] is called on the EDT or a coroutine dispatcher chosen by the caller.

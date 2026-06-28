@@ -156,7 +156,7 @@ class BuildsAndHealthChecksConfigurable(private val project: Project) : Searchab
                         .columns(60)
                         .align(AlignX.FILL)
                         .comment(
-                            "Inserted by Handover → Copyright → Fix All when a file is missing a header. " +
+                            "Inserted into files missing a copyright header when you run the copyright fix. " +
                             "Use {year} for the current year. Comment-wrapping is applied per file language."
                         )
                 }

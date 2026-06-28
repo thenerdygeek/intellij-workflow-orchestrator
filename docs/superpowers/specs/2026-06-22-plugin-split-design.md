@@ -335,3 +335,46 @@ DO NOT cut OSS-A (Phase 5) before 2c blanks it.** Headless gate proxy for the cr
 duplicate-class trap: B's built jar contains automation+sqlite classes but no `:core`/`:bamboo`/okhttp
 duplicates, AND A's post-carve dist contains neither automation classes nor the trimmed sqlite; full
 runtime behavior (incl. the ManualStageDialog path) is a PENDING-USER runIde smoke.
+
+---
+
+## 22. Phase 2b resolved (2026-06-27)
+
+**Carved `:handover` A → B.** `:handover` stays a top-level Gradle module (same rationale as `:automation` in
+2a — minimal/reversible diff, self-compiling module, and konsist `ModuleBoundaryTest`/`LayeringTest` do cover it
+as a `featureModule` — so all konsist cross-module boundary assertions must hold). It is bundled by `:plugin-b`
+(`implementation(project(":handover")){ isTransitive = false }`) and no longer by A; root keeps
+`kover(project(":handover"))` so the module's tests still count toward the repo coverage floor.
+
+**`CopyrightFixService` + copyright model types → `:core`.** `CopyrightFixService`, `CopyrightFileEntry`,
+and `CopyrightStatus` moved to `:core/copyright/`. The generic year-arithmetic logic (`consolidateYears`,
+`updateYearInHeader`, `hasCopyrightHeader`) stays in A under `:core/copyright` — it is stack-neutral and
+belongs with A. The **company copyright template** (the content in `copyrightTemplate`) remains a blank
+`:core` `PluginSettings` setting that B will seed in Phase 2c (blank in A + seed in B's preset together,
+so company users' settings UI isn't left empty in the interim). DO NOT cut OSS-A (Phase 5) before 2c
+seeds the company value.
+
+**`HandoverConfigurable` `:core` → `:handover`.** The settings configurable moved from `:core/settings/`
+into `:handover/settings/`; it is now at `com.workflow.orchestrator.handover.settings.HandoverConfigurable`.
+B's `plugin.xml` registers it under `parentId="workflow.orchestrator"`. A no longer registers it.
+
+**Dead `PreReviewService` dropped.** The `PreReviewService` class was unused (AI pre-review moved to the
+PR-tab `AiReviewTabPanel` in an earlier phase); it was deleted rather than moved.
+
+**Generic `PrService` stays in A.** `core.bitbucket.PrService` is a generic Bitbucket PR helper with no
+company-proprietary shape; it was relocated out of the handover-adjacent block in `:core` but remains in A.
+
+**"Handover" default tab removed from A.** `WorkflowToolWindowFactory.defaultTabs` drops the hard-coded
+"Handover" tab so it surfaces only as B's extension-provided `HandoverTabProvider` (registered via B's
+`plugin.xml`). B's descriptor also registers the project/app services, `HandoverConfigurable` settings
+page, and the handover startup activities.
+
+**`quickClipboardChips` docker defaults still in `:core` `PluginSettings` — deferred to 2c** (blank in A
++ seed in B preset together; same rationale as `bambooBuildVariableName` in 2a). DO NOT cut OSS-A
+(Phase 5) before 2c blanks it.
+
+**Git4Idea compile-only for `:handover`.** `:handover` uses `ChangeListManager` (a platform VCS API,
+always available) rather than Git4Idea-specific classes at runtime, so `git4idea` is `compileOnly` in
+`:handover`'s build. B therefore needs no Git4Idea runtime dep beyond what A already bundles.
+**PENDING-USER runIde smoke** confirms: no `LinkageError`/`NoClassDefFoundError` in `idea.log` when the
+Handover tab loads and `CopyrightFixCard` rescans changed files via `ChangeListManager.allChanges`.

@@ -1,5 +1,24 @@
 # :handover Module
 
+> **Phase 2b (2026-06-27):** `:handover` is carved into Plugin B. It stays a top-level Gradle
+> module (bundled by `:plugin-b` with `isTransitive=false`, kover coverage retained). Plugin A
+> does NOT ship it. Key moves in this carve:
+> - `CopyrightFixService` + `CopyrightFileEntry`/`CopyrightStatus` moved to `:core/copyright`
+>   (generic year-logic stays in A; the company copyright template is a blank `:core` setting
+>   that B will seed in Phase 2c).
+> - `HandoverConfigurable` moved INTO `:handover` (was `:core/settings`); now at
+>   `handover.settings.HandoverConfigurable`; registered by B's `plugin.xml`.
+> - Dead `PreReviewService` dropped.
+> - Generic `PrService` stays in A (`:core.bitbucket`), relocated out of the handover block.
+> - "Handover" default tab removed from A's `WorkflowToolWindowFactory.defaultTabs`; B registers
+>   `HandoverTabProvider` via the `workflowTab` EP.
+> - `quickClipboardChips` docker defaults still in `:core` `PluginSettings` — deferred to Phase 2c
+>   (blank in A + seed in B preset together).
+> - Git4Idea is `compileOnly` for `:handover` (runtime uses platform `ChangeListManager`); B needs
+>   no extra Git4Idea runtime dep — PENDING-USER runIde smoke to confirm.
+> - B's `plugin.xml` registers the tab, project/app services, settings configurable, and startup
+>   activities for this module.
+
 Task completion workflow: Jira closure, copyright enforcement, QA handover.
 
 Spec: docs/superpowers/specs/2026-05-08-handover-tab-redesign-design.md

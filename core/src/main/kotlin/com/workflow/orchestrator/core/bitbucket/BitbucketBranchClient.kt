@@ -765,7 +765,7 @@ data class BitbucketRequiredBuildCondition(
 
 /**
  * Lightweight Bitbucket Server REST client for branch operations only.
- * Lives in :core so both :jira (Start Work) and :handover (PR creation)
+ * Lives in :core so any A or B module (e.g. :jira for Start Work, :pullrequest for PR creation)
  * can access it without cross-module dependencies.
  */
 /**

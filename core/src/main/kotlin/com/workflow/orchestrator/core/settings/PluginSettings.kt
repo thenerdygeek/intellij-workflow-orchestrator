@@ -369,9 +369,9 @@ class PluginSettings : SimplePersistentStateComponent<PluginSettings.State>(Stat
          * timestamps, stored as ISO-8601 strings (e.g. "2026-04-01T14:32:00Z").
          *
          * Written by `HandoverOverrideTracker` in `:handover` on every override event.
-         * Read by [HandoverConfigurable] to compute the 30-day rolling count without
-         * requiring a cross-module service reference. Entries older than 30 days are pruned
-         * by [HandoverConfigurable.count30d] and by the tracker on every write.
+         * Read by `HandoverConfigurable` (in `:handover`) to compute the 30-day rolling count
+         * without requiring a cross-module service reference. Entries older than 30 days are
+         * pruned by `HandoverConfigurable.count30d` and by the tracker on every write.
          */
         var handoverOverrideLog by list<String>()
 
