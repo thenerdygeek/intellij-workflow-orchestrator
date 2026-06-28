@@ -12,6 +12,7 @@
         <workflowConfig implementation="com.workflow.orchestrator.companyb.CompanyBWorkflowConfig"/>
         <agentToolContributor implementation="com.workflow.orchestrator.companyb.CompanyBToolContributor"/>
         <tabProvider implementation="com.workflow.orchestrator.automation.ui.AutomationTabProvider"/>
+        <tabProvider implementation="com.workflow.orchestrator.handover.ui.HandoverTabProvider"/>
     </extensions>
 
     <extensions defaultExtensionNs="com.intellij">
@@ -43,5 +44,20 @@
             implementation="com.workflow.orchestrator.automation.service.QueueRecoveryStartupActivity"/>
         <notificationGroup id="workflow.automation" displayType="BALLOON"/>
         <notificationGroup id="workflow.automation.queue" displayType="BALLOON"/>
+        <!-- Handover module (carved from A in Phase 2b) -->
+        <projectConfigurable
+            parentId="workflow.orchestrator"
+            instance="com.workflow.orchestrator.handover.settings.HandoverConfigurable"
+            id="workflow.orchestrator.handover"
+            displayName="Handover"
+            nonDefaultProject="true"/>
+        <projectService serviceImplementation="com.workflow.orchestrator.handover.service.HandoverStateService"/>
+        <projectService serviceImplementation="com.workflow.orchestrator.handover.service.JiraClosureService"/>
+        <projectService serviceImplementation="com.workflow.orchestrator.handover.service.TimeTrackingService"/>
+        <projectService serviceImplementation="com.workflow.orchestrator.handover.service.HandoverAiSummaryCache"/>
+        <projectService serviceImplementation="com.workflow.orchestrator.handover.service.HandoverPlaceholderResolver"/>
+        <projectService serviceImplementation="com.workflow.orchestrator.handover.service.HandoverOverrideTracker"/>
+        <postStartupActivity implementation="com.workflow.orchestrator.handover.service.HandoverOverrideTrackerActivity"/>
+        <notificationGroup id="workflow.handover" displayType="BALLOON"/>
     </extensions>
 </idea-plugin>

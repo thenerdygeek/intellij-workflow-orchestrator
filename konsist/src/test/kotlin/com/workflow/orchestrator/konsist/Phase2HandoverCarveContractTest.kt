@@ -67,6 +67,36 @@ class Phase2HandoverCarveContractTest {
     }
 
     @Test
+    fun `B plugin_xml bundles handover registrations`() {
+        val xml = text("plugin-b/src/main/resources/META-INF/plugin.xml")
+        assertTrue(
+            xml.contains("com.workflow.orchestrator.handover.ui.HandoverTabProvider"),
+            "Plugin B must register the Handover tab provider.",
+        )
+        assertTrue(
+            xml.contains("com.workflow.orchestrator.handover.settings.HandoverConfigurable"),
+            "Plugin B must register the Handover settings page (moved to :handover).",
+        )
+        assertTrue(
+            xml.contains("com.workflow.orchestrator.handover.service.HandoverStateService"),
+            "Plugin B must register HandoverStateService.",
+        )
+        assertTrue(
+            xml.contains("\"workflow.handover\""),
+            "Plugin B must register the workflow.handover notification group.",
+        )
+    }
+
+    @Test
+    fun `B build bundles the handover module`() {
+        val build = text("plugin-b/build.gradle.kts")
+        assertTrue(
+            build.contains("project(\":handover\")"),
+            "Plugin B's build must bundle the :handover module.",
+        )
+    }
+
+    @Test
     fun `no A-resident src-main Kotlin file references the B-only workflow-handover notification group`() {
         val aModules = listOf("core", "jira", "bamboo", "sonar", "pullrequest", "automation", "agent", "web", "document")
         val hits = mutableListOf<String>()

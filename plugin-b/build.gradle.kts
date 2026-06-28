@@ -62,6 +62,10 @@ dependencies {
     // :core/:bamboo/okhttp resolve at runtime via A's PARENT classloader (B <depends> A). Bundling them
     // here too would duplicate A's classes across plugin classloaders → LinkageError.
     implementation(project(":automation")) { isTransitive = false }
+    // Bundle :handover into B (Phase 2b). NON-transitive: ship only handover's own classes; :core
+    // resolves at runtime via A's parent classloader (B <depends> A). CopyrightFixService moved to
+    // :core (ships in A); B's CopyrightFixCard binds to it at runtime.
+    implementation(project(":handover")) { isTransitive = false }
     // automation's runtime sqlite (A doesn't ship it). isTransitive=false above won't carry it.
     implementation(files(trimmedSqliteJar))
     // B compiles against :agent's agentToolContributor EP (AgentToolContributor,
