@@ -2162,6 +2162,24 @@ class AgentLoop(
                     stoppedByUserResult(toolName)
                 } else {
                     backgroundExecutor?.cancelOne(toolCallId)   // un-detached inline bg tool dies with the loop
+                    // BUG-STOP-1 B4: a whole-loop cancel re-throws here WITHOUT running the
+                    // normal per-tool completion path below, so the in-flight tool's card stays
+                    // RUNNING forever (spinner + runaway elapsed timer; only "New chat" clears
+                    // it). Emit a terminal progress event for this still-running toolCallId so
+                    // the webview finalizes the card via the same updateLastToolCall path before
+                    // we unwind. The for-loop runs tool calls sequentially, so exactly one tool
+                    // is in-flight at cancel time — this call.
+                    onToolCall(
+                        ToolCallProgress(
+                            toolName = toolName,
+                            args = call.function.arguments,
+                            result = "[Cancelled]",
+                            output = "[Cancelled]",
+                            durationMs = System.currentTimeMillis() - startTime,
+                            isError = true,
+                            toolCallId = toolCallId,
+                        )
+                    )
                     throw e
                 }
             } catch (e: Exception) {

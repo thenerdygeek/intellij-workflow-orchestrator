@@ -133,41 +133,78 @@ object ProcessRegistry {
     }
 
     /**
-     * Non-blocking two-phase graceful kill.
+     * Non-blocking two-phase graceful kill of the FULL process tree.
      *
      * Sends SIGTERM immediately on the calling thread (fast, non-blocking), then
      * offloads the blocking SIGTERM-wait → SIGKILL phase to [killExecutor] so the
      * caller (including EDT-affine JCEF callbacks) never blocks for up to 5 s.
      *
-     * 1. Kill child process tree via ProcessHandle (prevents orphans).
-     * 2. `destroy()` — SIGTERM (graceful; lets Maven/Gradle/Docker release locks).
-     * 3. On [killExecutor]: wait up to [GRACEFUL_KILL_WAIT_MS] for exit.
-     * 4. `destroyForcibly()` — SIGKILL if still alive after the wait.
+     * 1. Snapshot the descendant tree via ProcessHandle **before** killing the parent.
+     *    Once the parent dies, children are reparented (to launchd/init on Unix) and
+     *    `descendants()` no longer returns them — so the snapshot must be taken first
+     *    (BUG-STOP-1 B2: the old code captured nothing extra and only force-killed the
+     *    parent, leaving a `grep` child writing into the stdout pipe).
+     * 2. `destroy()` — SIGTERM to parent + every descendant (graceful; lets
+     *    Maven/Gradle/Docker release locks).
+     * 3. On [killExecutor], via [escalateKill]: wait up to [GRACEFUL_KILL_WAIT_MS] for
+     *    the parent to exit, then `destroyForcibly()` (SIGKILL) the parent AND every
+     *    descendant in the snapshot that is still alive — SIGTERM→SIGKILL escalation
+     *    for children, not just the parent.
      */
     private fun gracefulKill(process: Process) {
-        // Kill child processes first (prevents orphans) — fast, non-blocking
-        try {
-            process.toHandle().descendants().forEach { child ->
-                try { child.destroy() } catch (_: Exception) {}
-            }
+        // Snapshot descendants BEFORE the parent dies (reparented children vanish from
+        // descendants() afterwards). ProcessHandle may be unavailable on some JVMs.
+        val descendants: List<ProcessHandle> = try {
+            process.toHandle().descendants().toList()
         } catch (_: Exception) {
-            // ProcessHandle may not be available on all JVMs
+            emptyList()
         }
 
-        // Phase 1: SIGTERM (non-blocking — OS call, returns immediately)
+        // Phase 1: SIGTERM the whole tree (non-blocking — OS calls return immediately).
+        descendants.forEach { child ->
+            try { child.destroy() } catch (_: Exception) {}
+        }
         process.destroy()
 
-        // Phase 2: blocking wait → SIGKILL offloaded to background thread (F-15 fix).
-        // The calling thread (potentially EDT) must not block here.
+        // Phase 2: blocking wait → SIGKILL escalation offloaded to a background thread
+        // (F-15 fix). The calling thread (potentially EDT) must not block here.
         killExecutor.execute {
             try {
-                if (!process.waitFor(GRACEFUL_KILL_WAIT_MS, java.util.concurrent.TimeUnit.MILLISECONDS)) {
-                    log.info("[ProcessRegistry] Process did not exit after ${GRACEFUL_KILL_WAIT_MS}ms SIGTERM, sending SIGKILL")
-                    process.destroyForcibly()
-                    process.waitFor(2, java.util.concurrent.TimeUnit.SECONDS)
-                }
+                escalateKill(process, descendants)
             } catch (_: InterruptedException) {
                 process.destroyForcibly()
+                descendants.forEach { child -> try { child.destroyForcibly() } catch (_: Exception) {} }
+            }
+        }
+    }
+
+    /**
+     * Blocking SIGTERM-wait → SIGKILL escalation for a process and a pre-captured
+     * snapshot of its descendants. Extracted from [gracefulKill] so the escalation
+     * logic is unit-testable without offloading to [killExecutor].
+     *
+     * - Waits up to [gracefulWaitMs] for the parent to exit after its SIGTERM.
+     * - If the parent survived, `destroyForcibly()` it (SIGKILL) and wait briefly.
+     * - Force-kills every descendant in [descendants] that is still alive, so a child
+     *   that outlived (or was reparented away from) the parent does not survive Stop.
+     *
+     * `internal` for testing; not part of the public registry surface.
+     */
+    internal fun escalateKill(
+        process: Process,
+        descendants: List<ProcessHandle>,
+        gracefulWaitMs: Long = GRACEFUL_KILL_WAIT_MS,
+    ) {
+        if (!process.waitFor(gracefulWaitMs, java.util.concurrent.TimeUnit.MILLISECONDS)) {
+            log.info("[ProcessRegistry] Process did not exit after ${gracefulWaitMs}ms SIGTERM, sending SIGKILL")
+            process.destroyForcibly()
+            process.waitFor(2, java.util.concurrent.TimeUnit.SECONDS)
+        }
+        // SIGKILL any descendant still alive — covers the reparented `grep` child that
+        // a parent-only kill leaves writing into the stdout pipe (BUG-STOP-1 (c)).
+        descendants.forEach { child ->
+            if (child.isAlive) {
+                try { child.destroyForcibly() } catch (_: Exception) {}
             }
         }
     }

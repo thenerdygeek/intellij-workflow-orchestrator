@@ -261,4 +261,49 @@ class AgentLoopToolStopTest {
             "Whole-loop cancel must not produce a Stopped-by-user tool result: $progress"
         )
     }
+
+    @Test
+    fun `whole-loop cancel emits a terminal Cancelled event for the in-flight tool (BUG-STOP-1 B4)`() = runTest {
+        val started = CompletableDeferred<Unit>()
+        val slow = SlowTool(started)
+
+        val brain = sequenceBrain(
+            toolCallResponse("slow_tool" to "{}"),
+            toolCallResponse("attempt_completion" to """{"result":"should never reach here"}""")
+        )
+
+        val progress = java.util.concurrent.CopyOnWriteArrayList<ToolCallProgress>()
+        val loop = buildLoop(
+            brain,
+            listOf(slow, completionTool()),
+            onToolCall = { progress.add(it) },
+        )
+
+        val loopJob = launch {
+            try { loop.run("do the slow thing") } catch (_: CancellationException) { /* expected */ }
+        }
+
+        started.await()
+        // Capture the in-flight tool's id from its RUNNING start event before cancelling.
+        val runningId = progress.first { it.result.isEmpty() && it.durationMs == 0L }.toolCallId
+        loopJob.cancel()
+        loopJob.join()
+
+        // B4: a terminal progress event for the still-running tool must have been emitted,
+        // so the webview card finalizes (it would otherwise spin forever as RUNNING).
+        val terminal = progress.firstOrNull {
+            it.toolCallId == runningId &&
+                (it.result.isNotEmpty() || it.durationMs != 0L)
+        }
+        assertTrue(
+            terminal != null,
+            "Expected a terminal ToolCallProgress for the cancelled in-flight tool (id=$runningId), got: $progress"
+        )
+        assertTrue(terminal!!.isError, "Cancelled terminal event must be isError so the card renders as finalized")
+        assertTrue(
+            terminal.result.contains("Cancelled", ignoreCase = true) ||
+                (terminal.output?.contains("Cancelled", ignoreCase = true) == true),
+            "Cancelled terminal event should carry a [Cancelled] marker, got: result='${terminal.result}'"
+        )
+    }
 }

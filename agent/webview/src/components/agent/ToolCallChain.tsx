@@ -126,6 +126,10 @@ function StatusIcon({ status }: { status: ToolCall['status'] }) {
       return <Check className="size-3 text-[var(--success)]" />;
     case 'ERROR':
       return <X className="size-3 text-[var(--error)]" />;
+    case 'CANCELLED':
+      // Stopped/interrupted before it could finish — a muted stop square, not a
+      // scary error X (BUG-STOP-1 F1).
+      return <Square className="size-3 text-[var(--fg-muted)]" />;
     case 'PENDING':
       return <Clock className="size-3 text-[var(--fg-muted)]" />;
   }

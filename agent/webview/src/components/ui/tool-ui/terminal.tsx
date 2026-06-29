@@ -39,6 +39,55 @@ interface TerminalProps {
 // Limits the per-chunk O(n²) ansi_to_html call to at most this many lines.
 const RUNNING_HIGHLIGHT_TAIL = 400;
 
+// BUG-STOP-1 F3: while a command streams, throttle the (still O(n)) ANSI/heuristic
+// highlight to at most one recompute per this many ms. Per-chunk highlighting at the
+// 16ms StreamBatcher cadence monopolizes the JCEF event loop and starves the elapsed
+// timer's setInterval (the "frozen at 29.9s" freeze). 120ms ≈ 8 highlights/sec — live
+// enough to read, cheap enough to leave the loop free for the 100ms timer tick.
+const RUNNING_HIGHLIGHT_THROTTLE_MS = 120;
+
+/**
+ * Periodic trailing throttle: emits the leading value immediately, then at most one
+ * update per `delayMs` carrying the LATEST value seen in the window. `delayMs <= 0`
+ * disables throttling and flushes immediately (used once the card finalizes so the full
+ * output highlights at once). A pending trailing timer intentionally survives subsequent
+ * value changes, so a continuous flood still advances ~once per window instead of being
+ * perpetually rescheduled (which would freeze the live output).
+ */
+function useThrottledValue<T>(value: T, delayMs: number): T {
+  const [throttled, setThrottled] = useState(value);
+  const latestRef = useRef(value);
+  const lastFireRef = useRef(0);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  latestRef.current = value;
+
+  useEffect(() => {
+    if (delayMs <= 0) {
+      if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null; }
+      lastFireRef.current = Date.now();
+      setThrottled(value);
+      return;
+    }
+    const sinceLast = Date.now() - lastFireRef.current;
+    if (sinceLast >= delayMs) {
+      lastFireRef.current = Date.now();
+      setThrottled(value);
+    } else if (timerRef.current == null) {
+      timerRef.current = setTimeout(() => {
+        lastFireRef.current = Date.now();
+        timerRef.current = null;
+        setThrottled(latestRef.current);
+      }, delayMs - sinceLast);
+    }
+    // No cleanup-on-value-change: a scheduled trailing fire must outlive later values.
+  }, [value, delayMs]);
+
+  // Unmount-only cleanup for the pending trailing timer.
+  useEffect(() => () => { if (timerRef.current) clearTimeout(timerRef.current); }, []);
+
+  return throttled;
+}
+
 export function Terminal({
   command,
   stdout,
@@ -81,15 +130,22 @@ export function Terminal({
   }, [isRunning, expanded, lines, displayOutput]);
 
   const hasAnsi = useMemo(() => output !== stripAnsi(output), [output]);
+  // BUG-STOP-1 F3: throttle the highlight input while RUNNING so the per-chunk recompute
+  // can't starve the elapsed timer. Once finalized (isRunning falsy) the throttle is off
+  // and the full output highlights immediately.
+  const throttledHighlightInput = useThrottledValue(
+    highlightInput,
+    isRunning ? RUNNING_HIGHLIGHT_THROTTLE_MS : 0,
+  );
   // ANSI output: let ansi_up handle coloring. Plain text: apply heuristic token highlights.
   const displayHtml = useMemo(
     () => {
-      const strippedDisplay = stripAnsi(highlightInput);
-      return strippedDisplay === highlightInput
-        ? highlightPlainText(highlightInput)
-        : ansiUp.ansi_to_html(highlightInput);
+      const strippedDisplay = stripAnsi(throttledHighlightInput);
+      return strippedDisplay === throttledHighlightInput
+        ? highlightPlainText(throttledHighlightInput)
+        : ansiUp.ansi_to_html(throttledHighlightInput);
     },
-    [highlightInput],
+    [throttledHighlightInput],
   );
 
   // Auto-scroll to bottom when output changes or when expanding

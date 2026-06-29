@@ -24,7 +24,10 @@ export interface SubAgentState {
 
 // ── Tool call types ──
 
-export type ToolCallStatus = 'PENDING' | 'RUNNING' | 'COMPLETED' | 'ERROR';
+// 'CANCELLED' is a terminal status applied when a still-live tool call is drained
+// out of the active chain (session complete / cancel / stream end) — BUG-STOP-1 F1.
+// It finalizes the card (isRunning=false → spinner stops, elapsed timer unmounts).
+export type ToolCallStatus = 'PENDING' | 'RUNNING' | 'COMPLETED' | 'ERROR' | 'CANCELLED';
 
 /**
  * Metadata for a tool-produced image. Mirrors `ToolResult.ImageRefData` in

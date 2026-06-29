@@ -8,18 +8,31 @@ import org.junit.jupiter.api.Test
 class ToolStopCoordinatorTest {
 
     @Test
-    fun `process precedence - when a process is killed, coroutine cancel is NOT attempted`() {
-        var coroutineAttempted = false
+    fun `when a process is killed, the coroutine job is ALSO cancelled (BUG-STOP-1 B1)`() {
+        // BUG-STOP-1 B1: Stop must kill the OS process AND cancel the tool coroutine.
+        // The old short-circuit (`if (killProcess) return true`) left run_command's
+        // monitor loop spinning for the command's natural runtime.
+        var cancelledId: String? = null
         val result = ToolStopCoordinator.requestStop(
             "t1",
             killProcess = { true },
             cancelCoroutine = {
-                coroutineAttempted = true
+                cancelledId = it
                 true
             },
         )
         assertTrue(result)
-        assertFalse(coroutineAttempted, "coroutine cancel must not run when a process was killed")
+        assertEquals("t1", cancelledId, "coroutine cancel MUST run even when a process was killed")
+    }
+
+    @Test
+    fun `returns true when only the process was registered (coroutine already gone)`() {
+        val result = ToolStopCoordinator.requestStop(
+            "t1b",
+            killProcess = { true },
+            cancelCoroutine = { false },
+        )
+        assertTrue(result, "killing the process alone is still a successful stop")
     }
 
     @Test

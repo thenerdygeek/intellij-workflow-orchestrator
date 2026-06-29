@@ -178,6 +178,18 @@ function capToolOutput(output: string | undefined): string | undefined {
   );
 }
 
+/**
+ * BUG-STOP-1 F1 — coerce a still-live tool status to a terminal one when a tool call
+ * is drained out of the active chain (session complete / cancel / stream end). A tool
+ * left RUNNING/PENDING at drain time was interrupted; persisting it verbatim finalizes
+ * a card that spins forever (and the elapsed timer runs away, since `isRunning` never
+ * flips false). Coercing to CANCELLED guarantees every drained card is terminal even if
+ * the backend never emits its own terminal event. Already-terminal statuses pass through.
+ */
+function terminalToolStatus(status: ToolCallStatus): ToolCallStatus {
+  return status === 'RUNNING' || status === 'PENDING' ? 'CANCELLED' : status;
+}
+
 const SPILL_MARKER_TEXT =
   'Older messages were archived to keep the chat responsive. ' +
   'The agent still sees the full conversation in its context.';
@@ -887,7 +899,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
           toolCallId: tc.id,
           toolName: tc.name,
           args: tc.args,
-          status: tc.status,
+          status: terminalToolStatus(tc.status),
           result: tc.result,
           output,
           durationMs: tc.durationMs,
@@ -1007,7 +1019,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
                 toolCallId: tc.id,
                 toolName: tc.name,
                 args: tc.args,
-                status: tc.status,
+                status: terminalToolStatus(tc.status),
                 result: tc.result,
                 output,
                 durationMs: tc.durationMs,
@@ -1336,7 +1348,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
               toolCallId: tc.id,
               toolName: tc.name,
               args: tc.args,
-              status: tc.status,
+              status: terminalToolStatus(tc.status),
               result: tc.result,
               output,
               durationMs: tc.durationMs,
@@ -1467,7 +1479,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
           toolCallId: tc.id,
           toolName: tc.name,
           args: tc.args,
-          status: tc.status,
+          status: terminalToolStatus(tc.status),
           result: tc.result,
           output,
           durationMs: tc.durationMs,
@@ -1916,7 +1928,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
               toolCallId: tc.id,
               toolName: tc.name,
               args: tc.args,
-              status: tc.status,
+              status: terminalToolStatus(tc.status),
               result: tc.result,
               output,
               durationMs: tc.durationMs,
@@ -2103,7 +2115,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
                 toolCallId: tc.id,
                 toolName: tc.name,
                 args: tc.args,
-                status: tc.status,
+                status: terminalToolStatus(tc.status),
                 result: tc.result,
                 output,
                 durationMs: tc.durationMs,

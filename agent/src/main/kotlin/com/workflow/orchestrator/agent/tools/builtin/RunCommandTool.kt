@@ -728,6 +728,16 @@ class RunCommandTool(
             // ProcessRegistry.kill is non-suspending and idempotent (remove+gracefulKill
             // offloads the blocking wait to a daemon executor, so this never blocks the
             // coroutine dispatcher).
+            //
+            // BUG-STOP-1 B3 — make the stdout flood stoppable. `stopped` gates the stream
+            // callback so post-Stop chunks are dropped from the UI even if the blocking
+            // reader thread has not yet unwound; `readerThreadRef`/`stderrReaderThreadRef`
+            // let the finally interrupt the threads, and closing the process input stream
+            // unblocks their native `reader.read()` (interrupt alone can't break a blocking
+            // pipe read).
+            val stopped = java.util.concurrent.atomic.AtomicBoolean(false)
+            var readerThreadRef: Thread? = null
+            var stderrReaderThreadRef: Thread? = null
             try {
             // Determine idle threshold — caller-supplied param wins, otherwise read from
             // AgentSettings (defaults: 15s / 60s for build commands).
@@ -758,7 +768,9 @@ class RunCommandTool(
                             val chunk = String(buffer, 0, bytesRead)
                             managed.outputLines.add(chunk)
                             managed.lastOutputAt.set(System.currentTimeMillis())
-                            activeStreamCallback?.invoke(toolCallId, chunk)
+                            // BUG-STOP-1 B3: drop chunks once Stop has fired so a not-yet-dead
+                            // child can't keep flooding the terminal UI after "Killing process".
+                            if (!stopped.get()) activeStreamCallback?.invoke(toolCallId, chunk)
                             bytesRead = reader.read(buffer)
                         }
                     }
@@ -772,6 +784,7 @@ class RunCommandTool(
                 name = "RunCommand-Output-$toolCallId"
                 start()
             }
+            readerThreadRef = readerThread
 
             // Stderr reader thread (only when separate_stderr is true)
             val stderrLines = if (separateStderr) java.util.concurrent.CopyOnWriteArrayList<String>() else null
@@ -795,6 +808,7 @@ class RunCommandTool(
                     start()
                 }
             } else null
+            stderrReaderThreadRef = stderrReaderThread
 
             // 11. Monitor loop
             // Tracks consecutive LIKELY_STDIN_PROMPT classifications across idle
@@ -904,6 +918,19 @@ class RunCommandTool(
                 // per-tool Stop (ToolStopCoordinator). Covers the global loop-cancel
                 // path where none of the inline kills have run.
                 ProcessRegistry.kill(toolCallId)
+
+                // BUG-STOP-1 B3: gate any further stream callbacks and unblock the reader
+                // threads on EVERY exit path (cancel / timeout / normal). Setting `stopped`
+                // drops in-flight chunks from the UI; closing the process streams breaks the
+                // readers out of their blocking native `reader.read()` (a plain interrupt
+                // cannot); the interrupts are belt-and-suspenders. runCatching is used (not a
+                // bare swallowing catch) so the reader-thread swallow-count contract stays intact.
+                // On the normal exit path the readers have already drained to EOF — harmless.
+                stopped.set(true)
+                runCatching { process.inputStream.close() }
+                if (separateStderr) runCatching { process.errorStream.close() }
+                readerThreadRef?.interrupt()
+                stderrReaderThreadRef?.interrupt()
             }
         } catch (e: CancellationException) {
             throw e // Propagate for structured concurrency
