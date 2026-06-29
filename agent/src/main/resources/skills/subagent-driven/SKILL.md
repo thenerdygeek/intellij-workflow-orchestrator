@@ -58,8 +58,8 @@ There are two ways to configure a subagent:
 | `spring-boot-engineer` | Spring Boot features (endpoints, services, JPA, security, migrations) |
 | `refactoring-specialist` | Safe refactoring with tests before/after and rollback on failure |
 | `devops-engineer` | CI/CD, Docker, deployment scripts, build system |
-| `security-auditor` | OWASP Top 10, dependency vulnerabilities, auth review |
-| `performance-engineer` | Profiling, bottleneck identification, query optimization |
+
+> Spring/Java-stack projects additionally offer `security-auditor` (OWASP, dependency CVEs, auth review) and `performance-engineer` (profiling, bottlenecks, query optimization) — check the Subagent Delegation list in your system prompt for what is actually available in this project.
 
 When `agent_type` is set, `scope` is ignored — the agent type provides its own curated system prompt and tool set.
 

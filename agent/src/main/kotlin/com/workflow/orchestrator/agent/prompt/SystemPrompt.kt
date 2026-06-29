@@ -967,8 +967,10 @@ In each user message, the environment_details will specify the current mode. The
             }
             appendLine("- \"refactoring-specialist\" — safe refactoring with tests before/after each step + per-file rollback.")
             appendLine("- \"devops-engineer\" — CI/CD, Docker, Maven build config, AWS deployment configs.")
-            appendLine("- \"security-auditor\" — security audit: OWASP Top 10, Spring Security, secrets, dependency CVEs.")
-            appendLine("- \"performance-engineer\" — performance: database, caching, HTTP clients, JVM tuning.")
+            if (ideContext == null || ideContext.supportsSpring) {
+                appendLine("- \"security-auditor\" — security audit: OWASP Top 10, Spring Security, secrets, dependency CVEs.")
+                appendLine("- \"performance-engineer\" — performance: database, caching, HTTP clients, JVM tuning.")
+            }
             appendLine()
             appendLine("**When to delegate vs use direct tools:** for a specific file/class/function, anything a single tool call would handle, or work that needs your conversation context (sub-agents can't see it) — use read_file/search_code/glob_files directly; don't over-delegate. Reach for explorer when exploration is broad or will clearly take more than ~3 queries. For external/web research use research — NOT inline web_fetch/web_search (which pollutes your context and saves no re-readable report).")
             appendLine()

@@ -298,8 +298,6 @@ Use the agent tool to delegate self-contained tasks to a sub-agent with its own 
 - "test-automator" — writing tests (TDD or retrofit); discovers project testing patterns.
 - "refactoring-specialist" — safe refactoring with tests before/after each step + per-file rollback.
 - "devops-engineer" — CI/CD, Docker, Maven build config, AWS deployment configs.
-- "security-auditor" — security audit: OWASP Top 10, Spring Security, secrets, dependency CVEs.
-- "performance-engineer" — performance: database, caching, HTTP clients, JVM tuning.
 
 **When to delegate vs use direct tools:** for a specific file/class/function, anything a single tool call would handle, or work that needs your conversation context (sub-agents can't see it) — use read_file/search_code/glob_files directly; don't over-delegate. Reach for explorer when exploration is broad or will clearly take more than ~3 queries. For external/web research use research — NOT inline web_fetch/web_search (which pollutes your context and saves no re-readable report).
 

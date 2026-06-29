@@ -94,7 +94,7 @@ For each non-trivial changed file, analyze against the checklist below. Inject c
 - Code duplication across the diff
 - Unnecessary abstractions or premature generalization
 
-> **Note:** For deep security audits use `security-auditor`. For performance profiling use `performance-engineer`.
+> **Note:** Deep security auditing and performance profiling are separate specialist concerns — out of scope for this code review.
 
 ## Severity Definitions
 

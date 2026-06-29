@@ -243,7 +243,7 @@ Key files: `ide/IdeContext.kt`, `ide/IdeContextDetector.kt`, `ide/ProjectScanner
 |---------|----------------|
 | `agentRole()` | IDE name (IntelliJ IDEA / PyCharm / WebStorm) |
 | `capabilities()` | IDE context summary, specialized tool hints, language-specific curl tips |
-| `rules()` | Tool preference examples (mvn/gradlew vs pytest), subagent list (spring-boot-engineer vs python-engineer) |
+| `rules()` | Tool preference examples (mvn/gradlew vs pytest), subagent list (spring-boot-engineer vs python-engineer); `spring-boot-engineer` entry is `supportsJava`-gated; `security-auditor`/`performance-engineer` entries are `supportsSpring`-gated |
 | `systemInfo()` | IDE name in system information |
 
 **Backward compatibility:** `ideContext = null` produces the same prompt as before (IntelliJ-flavored defaults).
@@ -255,6 +255,7 @@ Integration-specific prose (role integrations clause, `jira:` link scheme, Proje
 `AgentConfigLoader.filterByIdeContext()` gates language-specific personas:
 - `spring-boot-engineer` → only when `IdeContext.supportsJava`
 - `python-engineer` → only when `IdeContext.supportsPython`
+- `security-auditor` / `performance-engineer` → only when `IdeContext.supportsSpring` (Site A `filterByIdeContext` + Site B `SystemPrompt` prose + the Site C routing pointers in code-reviewer/architect-reviewer/subagent-driven). **Advisory gate:** `SpawnAgentTool.execute()` resolves a persona by name via the *unfiltered* `getCachedConfig`, so an explicit `agent(agent_type="security-auditor")` still runs (degraded — its `spring` tool absent) even when un-advertised. This is intentional; do not "fix" it into a hard block.
 - All other agents (code-reviewer, architect-reviewer, test-automator, etc.) → always available
 
 `SpawnAgentTool` uses `getFilteredConfigs(ideContext)` so the LLM description only lists relevant agents.

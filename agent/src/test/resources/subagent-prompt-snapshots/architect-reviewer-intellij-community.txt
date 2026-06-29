@@ -111,7 +111,7 @@ Detect from the parent's prompt:
 - [ ] Caching strategy appropriate (not over-cached, not missing obvious caches)
 - [ ] Database access patterns scalable (no N+1, proper indexing strategy)
 
-> **Note:** For line-level code quality (correctness, naming, test coverage) use `code-reviewer`. For security audits use `security-auditor`.
+> **Note:** For line-level code quality (correctness, naming, test coverage) use `code-reviewer`. Security auditing is a separate specialist concern, out of scope for this architecture review.
 
 ## Report Format
 
