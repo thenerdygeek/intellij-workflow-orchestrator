@@ -24,6 +24,7 @@ const HISTORY_LIST_COMPONENTS = {
 export function HistoryView() {
   const historyItems = useChatStore((s) => s.historyItems);
   const historySearch = useChatStore((s) => s.historySearch);
+  const historyLoading = useChatStore((s) => s.historyLoading);
   const setHistorySearch = useChatStore((s) => s.setHistorySearch);
   const setActiveSessionDelegated = useChatStore((s) => s.setActiveSessionDelegated);
 
@@ -145,7 +146,7 @@ export function HistoryView() {
     setContextMenu(null);
   }, []);
 
-  const isEmpty = historyItems.length === 0;
+  const isEmpty = !historyLoading && historyItems.length === 0;
 
   return (
     <div className="flex flex-col h-full bg-[var(--bg)]">
@@ -268,7 +269,14 @@ export function HistoryView() {
 
       {/* Content area */}
       <div className="flex-1 min-h-0">
-        {isEmpty ? (
+        {historyLoading ? (
+          <div
+            className="flex flex-col items-center justify-center h-full text-center px-3"
+            data-testid="history-loading"
+          >
+            <p className="text-sm text-[var(--fg-muted)]">Loading conversations…</p>
+          </div>
+        ) : isEmpty ? (
           <div className="flex flex-col items-center justify-center h-full text-center px-3">
             <MessageSquareDashed size={48} className="text-[var(--fg-muted)] mb-3" />
             <p className="text-base font-semibold text-[var(--fg-secondary)] mb-1">No sessions yet</p>

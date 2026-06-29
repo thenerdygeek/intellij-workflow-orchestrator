@@ -455,6 +455,7 @@ interface ChatState {
   viewMode: 'history' | 'chat';
   historyItems: HistoryItem[];
   historySearch: string;
+  historyLoading: boolean;
 
   // Delegation banner — non-null when the active session was delegated from another IDE
   activeSessionDelegated: DelegationMetadata | null;
@@ -791,6 +792,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   viewMode: 'chat' as const,
   historyItems: [],
   historySearch: '',
+  historyLoading: false,
   activeSessionDelegated: null,
   sessionDelegatedRepo: null,
   resumeSessionId: null,
@@ -2802,6 +2804,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
   setHistorySearch(query: string) {
     set({ historySearch: query });
+  },
+  setHistoryLoading(loading: boolean) {
+    set({ historyLoading: loading });
   },
   setActiveSessionDelegated(delegated: DelegationMetadata | null) {
     set({ activeSessionDelegated: delegated });

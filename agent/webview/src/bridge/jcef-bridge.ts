@@ -675,6 +675,7 @@ const bridgeFunctions: Record<string, (...args: any[]) => void> = {
     try {
       const items: HistoryItem[] = JSON.parse(historyItemsJson);
       stores?.getChatStore().setHistoryItems(items);
+      stores?.getChatStore().setHistoryLoading(false);
       stores?.getChatStore().setViewMode('history');
     } catch (e) {
       console.error('[bridge] loadSessionHistory error:', e);
@@ -820,6 +821,8 @@ export const kotlinBridge = {
     callKotlin('_copyToClipboard', text);
   },
   requestHistory() {
+    stores?.getChatStore().setHistoryLoading(true);
+    stores?.getChatStore().setViewMode('history');
     callKotlin('_requestHistory');
   },
 
