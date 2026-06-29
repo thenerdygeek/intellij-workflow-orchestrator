@@ -53,19 +53,12 @@ Use `changelist_shelve` to shelve IntelliJ changelists (IDE-native, not git stas
 - Unshelve when returning to the task
 - Prefer this over `git stash` when working inside IntelliJ
 
-## PR-Related Tasks
+## PR & CI tasks (when integrations are configured)
 
-For PR-related git tasks, use Bitbucket tools (deferred — activate via `tool_search` first):
-- `bitbucket_pr(action="get_pr_diff")` for diffs
-- `bitbucket_pr(action="get_pr_changes")` for changed files
-- `bitbucket_pr(action="get_pr_commits")` for commit history
-- `bitbucket_pr(action="create_pr")` to create PRs
+These tools are deferred and appear only when their service URL is set in settings — load them via `tool_search` first.
 
-## CI Context
-
-Before confirming a branch is ready to merge, check build status (deferred — activate via `tool_search` first):
-- `bamboo_builds(action="build_status")` for Bamboo CI
-- `bitbucket_repo(action="get_build_statuses")` for Bitbucket pipelines
+- Pull requests: `bitbucket_pr(action="get_pr_diff")` / `get_pr_changes` / `get_pr_commits` / `create_pr`
+- Build/CI status: `bamboo_builds(action="build_status")`, `bitbucket_repo(action="get_build_statuses")`
 
 ## Destructive Operations
 
