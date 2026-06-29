@@ -1,6 +1,6 @@
 # Plugin Split — Phase 2 RESULTS (carve company-only → B)
 
-**Status: COMPLETE on `feature/plugin-split` — NOT pushed.** 22 commits, `dad8d4c7bf89712b05a57bcbd4edae4aecf2c465..834e46c37` (Phase-2 BASE → HEAD). Executed autonomously, subagent-driven, with the split's mandated multi-round review at every step (3-round opus plan review per sub-phase + per-task two-stage review + whole-sub-phase opus review + a final whole-branch opus review). Green gate verified after each sub-phase. Push + GUI smoke left for the user.
+**Status: COMPLETE + PUSHED** to `origin/feature/plugin-split` (@ `1914b3406`; Phase-2 work `dad8d4c7b..1914b3406`). **All 4 DECISIONS CONFIRMED by the user (2026-06-29): keep current behavior on all four** — one-shot seed; `copyrightTemplate` stays manual/null; `defaultTargetBranch="develop"` for fresh A+B; repo extraction deferred to Phase 5. No code change resulted (the implementation already matched). Executed autonomously, subagent-driven, with the split's mandated multi-round review at every step (3-round opus plan review per sub-phase + per-task two-stage review + whole-sub-phase opus review + a final whole-branch opus review). Green gate verified after each sub-phase. Push + GUI smoke left for the user.
 
 Plans: `docs/superpowers/plans/2026-06-27-plugin-split-phase2{a,b,c}-*.md`. Spec notes: design §21 (2a) / §22 (2b) / §23 (2c). Exploration maps: `.superpowers/phase2/explore-{automation,handover,ep-preset-konsist}.md`. SDD ledger: `.superpowers/sdd/progress.md`.
 
@@ -74,7 +74,7 @@ Run `gradlew.bat :plugin-b:runIde` (loads A+B) and the root `runIde` (loads A al
 
 ---
 
-## DECISIONS NEEDING USER CONFIRMATION
+## DECISIONS — ALL CONFIRMED BY USER (2026-06-29): keep current behavior on all 4
 
 1. **ConfigPreset seed is one-shot** (`configPresetApplied` sentinel). Once a value-providing preset has been applied, the seeder never re-runs — so if the company later **changes** a preset value (e.g. adds a chip), existing installs that already seeded won't pick it up. Reversible: introduce a preset-version int and re-apply when it bumps (described, not built — YAGNI). Confirm acceptable.
 2. **`copyrightTemplate` is NOT seeded by B's preset** — the EP supports it, but `CompanyBConfigPreset.copyrightTemplate()` returns null. Seeding a placeholder would insert wrong copyright text; the real header is out-of-band (the company sets it in B's settings UI). Flip it to return the real header when available. Confirm.
