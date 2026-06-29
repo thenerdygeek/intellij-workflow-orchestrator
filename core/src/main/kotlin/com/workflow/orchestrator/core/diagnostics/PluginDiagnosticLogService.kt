@@ -18,18 +18,36 @@ import java.util.logging.LogRecord
  * records — so a tester running in a sandbox IDE can hand over a focused log without the
  * cumulative 13K+ line platform `idea.log` (full of unrelated platform noise).
  *
- * **Approach (java.util.logging parent-handler propagation).** On IntelliJ 2025.1,
- * `Logger.getInstance(category)` is backed by an `IdeaLogger` whose JUL logger name equals the
- * category string. Every plugin category begins with `com.workflow.orchestrator`, so attaching a
- * single [FileHandler] to the parent JUL logger `"com.workflow.orchestrator"` captures ALL plugin
- * records via JUL parent-handler propagation — with no per-category wiring. The platform's
- * `clearHandlers()` only touches the root (`""`) logger, so our handler survives.
+ * **Approach (root JUL logger + namespace [Filter]).** On IntelliJ 2025.1, `Logger.getInstance`
+ * is backed by `com.intellij.idea.LoggerFactory`, which wraps
+ * `java.util.logging.Logger.getLogger(category)` with the category string VERBATIM. Two category
+ * shapes exist and they land on DIFFERENT branches of the JUL name tree:
+ *  - `Logger.getInstance(Class)`  → category `"#" + fqcn` → JUL logger `#com.workflow.orchestrator…`
+ *    (the overwhelmingly common case — ~203 call sites)
+ *  - `Logger.getInstance(String)` → JUL logger == the literal string (e.g. `com.workflow.orchestrator…`)
+ *
+ * The leading `#` on the class-based loggers means they are NOT descendants of a
+ * `com.workflow.orchestrator` JUL parent — their ancestor chain is `#com.workflow.orchestrator` →
+ * `#com.workflow` → `#com` → root `""`. So the original [FileHandler] on the
+ * `com.workflow.orchestrator` parent captured nothing and `plugin-0.log` stayed 0 bytes. The only
+ * JUL node shared by BOTH name shapes is the ROOT logger (`""`), which every record reaches by
+ * parent-handler propagation — and that is exactly where the platform attaches its `idea.log`
+ * handler (`JulLogger.configureLogFileAndConsole` calls `Logger.getLogger("")`), which is why
+ * idea.log DID capture these records while our intermediate handler did not.
+ *
+ * We therefore attach our [FileHandler] to the ROOT logger and gate it with a
+ * [PluginLogNamespaceFilter] so ONLY `com.workflow.orchestrator` records (after stripping the `#`)
+ * are written — keeping the file plugin-only rather than a copy of idea.log. The platform's
+ * `JulLogger.clearHandlers()` clears the ROOT logger's handlers, but it runs ONCE during early
+ * startup (at logger init); this Activity installs at project-open, well after that, and
+ * `addHandler` APPENDS alongside the existing idea.log handler, so ours persists for the session.
+ * `useParentHandlers` is left untouched, so idea.log keeps receiving plugin records too.
  *
  * **Known gap (acceptable).** Two string-category loggers in
  * `com.workflow.orchestrator.core.settings.PluginSettings` —
  * `Logger.getInstance("WebAllowlist")` and `Logger.getInstance("WebEgressDenyList")` — are NOT
- * under the `com.workflow.orchestrator` namespace, so their (low-volume, parse-failure-only)
- * records are not captured here. They still reach `idea.log` normally.
+ * under the `com.workflow.orchestrator` namespace, so the filter rejects them; their (low-volume,
+ * parse-failure-only) records are not captured here. They still reach `idea.log` normally.
  *
  * App-level service: the handler is process-wide (one JUL logger tree per IDE), so this is
  * `Service.Level.APP`. The constructor does no heavy work — installation is deferred to
@@ -54,10 +72,10 @@ class PluginDiagnosticLogService : Disposable {
     @Volatile private var handler: FileHandler? = null
 
     /**
-     * Attach the rotating file handler to the `com.workflow.orchestrator` JUL logger. No-op when
-     * [enabled] is false or when already installed. The install is ONE-SHOT per IDE session — once
-     * latched there is no uninstall path, so toggling the setting off only takes effect after a
-     * restart (the UI label says as much).
+     * Attach the rotating file handler to the ROOT JUL logger, gated by [PluginLogNamespaceFilter]
+     * so only this plugin's records are written. No-op when [enabled] is false or when already
+     * installed. The install is ONE-SHOT per IDE session — once latched there is no uninstall path,
+     * so toggling the setting off only takes effect after a restart (the UI label says as much).
      */
     fun ensureInstalled(enabled: Boolean) {
         if (!enabled) return
@@ -74,11 +92,16 @@ class PluginDiagnosticLogService : Disposable {
             fileHandler = FileHandler(File(dir, "plugin-%g.log").absolutePath, FILE_LIMIT_BYTES, FILE_COUNT, true)
             fileHandler.level = Level.ALL
             fileHandler.formatter = CompactFormatter()
-            JUL_LOGGER.addHandler(fileHandler)
+            // Filter at the handler so the ROOT-attached handler writes plugin records ONLY, not the
+            // full idea.log stream — see class KDoc for why root (not the `com.workflow.orchestrator`
+            // parent) is the correct attach point given the `#`-prefixed class-based logger names.
+            fileHandler.filter = PluginLogNamespaceFilter()
+            ROOT_JUL_LOGGER.addHandler(fileHandler)
             // Do NOT touch useParentHandlers — idea.log must keep receiving plugin records too.
             handler = fileHandler
-            // One INFO line via the IDE Logger: lands in idea.log AND (since this category is under
-            // com.workflow.orchestrator) becomes the first record written to the new file — a handy header.
+            // One INFO line via the IDE Logger: lands in idea.log AND (the filter strips the leading
+            // `#`, so this `#com.workflow.orchestrator…` category passes) becomes the first record
+            // written to the new file — a handy header.
             log.info("Plugin diagnostic log enabled: ${File(dir, "plugin-0.log").absolutePath}")
         } catch (e: Exception) {
             // Close the partially-constructed handler so its file lock / fd doesn't leak.
@@ -92,7 +115,7 @@ class PluginDiagnosticLogService : Disposable {
     override fun dispose() {
         val h = handler ?: return
         try {
-            JUL_LOGGER.removeHandler(h)
+            ROOT_JUL_LOGGER.removeHandler(h)
             h.flush()
             h.close()
         } catch (e: Exception) {
@@ -107,9 +130,39 @@ class PluginDiagnosticLogService : Disposable {
         private const val FILE_LIMIT_BYTES = 5 * 1024 * 1024
         private const val FILE_COUNT = 3
 
-        /** The plugin's parent JUL logger; every `Logger.getInstance` category propagates to it. */
-        private val JUL_LOGGER: java.util.logging.Logger =
-            java.util.logging.Logger.getLogger("com.workflow.orchestrator")
+        /**
+         * The ROOT JUL logger (`""`). Every `Logger.getInstance` record propagates here via JUL
+         * parent-handler propagation regardless of whether the category is `#`-prefixed (class-based)
+         * or a bare string — see class KDoc. The [PluginLogNamespaceFilter] on the handler narrows
+         * it back to plugin-only records.
+         */
+        private val ROOT_JUL_LOGGER: java.util.logging.Logger =
+            java.util.logging.Logger.getLogger("")
+    }
+}
+
+/**
+ * Passes only records that originate from this plugin's own loggers, so a [FileHandler] attached to
+ * the shared ROOT JUL logger writes a plugin-only file instead of the whole platform log stream.
+ *
+ * Handles the two JUL name shapes IntelliJ's `LoggerFactory` produces (see
+ * [PluginDiagnosticLogService] KDoc):
+ *  - `Logger.getInstance(Class)`  → `#com.workflow.orchestrator…` (leading `#`)
+ *  - `Logger.getInstance(String)` → `com.workflow.orchestrator…`  (no `#`)
+ *
+ * A single leading `#` is stripped before the namespace check; `null` logger names (and platform
+ * categories such as `com.intellij.*`) are rejected.
+ */
+internal class PluginLogNamespaceFilter : java.util.logging.Filter {
+    override fun isLoggable(record: LogRecord): Boolean {
+        val name = record.loggerName ?: return false
+        val canonical = if (name.startsWith('#')) name.substring(1) else name
+        return canonical.startsWith(PLUGIN_NAMESPACE)
+    }
+
+    companion object {
+        /** Root package shared by every plugin logger category. */
+        const val PLUGIN_NAMESPACE: String = "com.workflow.orchestrator"
     }
 }
 
