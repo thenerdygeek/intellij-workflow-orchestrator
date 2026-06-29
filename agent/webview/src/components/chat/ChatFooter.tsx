@@ -265,10 +265,10 @@ export const ChatFooter = memo(function ChatFooter() {
           }}
         >
           <span className="text-[12px] flex-1" style={{ color: 'var(--fg-muted)' }}>
-            This session was interrupted. You can continue where it left off.
+            This session was interrupted. Type a message to continue.
           </span>
           <button
-            className="flex items-center gap-1.5 rounded-md px-3 py-1.5 text-[12px] font-medium transition-colors"
+            className="rounded-md px-3 py-1.5 text-[12px] font-medium transition-colors"
             style={{
               color: '#fff',
               backgroundColor: 'var(--accent, #6366f1)',
@@ -279,10 +279,7 @@ export const ChatFooter = memo(function ChatFooter() {
               });
             }}
           >
-            <svg width="12" height="12" viewBox="0 0 16 16" fill="none">
-              <path d="M5 3l8 5-8 5V3z" fill="currentColor" />
-            </svg>
-            Resume
+            Continue
           </button>
         </div>
       )}

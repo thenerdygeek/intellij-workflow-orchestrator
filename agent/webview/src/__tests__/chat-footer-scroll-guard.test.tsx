@@ -12,7 +12,7 @@
  * unconditional `scrollIntoView`.
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { render, act, cleanup } from '@testing-library/react';
+import { render, act, cleanup, screen } from '@testing-library/react';
 import { useChatStore } from '@/stores/chatStore';
 import { footerShouldForceScroll } from '@/components/chat/ChatFooter';
 
@@ -74,6 +74,32 @@ describe('footerShouldForceScroll', () => {
 
   it('fails open (true) when no scroller is present', () => {
     expect(footerShouldForceScroll()).toBe(true);
+  });
+});
+
+describe('ChatFooter resume bar — label and icon (BUG-1 follow-up)', () => {
+  it('shows "Continue" (not "Resume") when resumeSessionId is set', () => {
+    act(() => useChatStore.setState({ resumeSessionId: 'session-abc', busy: false }));
+    render(<ChatFooter />);
+    expect(screen.getByRole('button', { name: 'Continue' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Resume' })).toBeNull();
+  });
+
+  it('does not render the play-triangle SVG path in the resume bar', () => {
+    act(() => useChatStore.setState({ resumeSessionId: 'session-abc', busy: false }));
+    const { container } = render(<ChatFooter />);
+    // The removed play-triangle path was: d="M5 3l8 5-8 5V3z"
+    const paths = container.querySelectorAll('path');
+    const playTriangle = Array.from(paths).find((p) =>
+      p.getAttribute('d')?.startsWith('M5 3l8 5'),
+    );
+    expect(playTriangle).toBeUndefined();
+  });
+
+  it('shows updated copy text pointing the user to type a message', () => {
+    act(() => useChatStore.setState({ resumeSessionId: 'session-abc', busy: false }));
+    render(<ChatFooter />);
+    expect(screen.getByText(/Type a message to continue/i)).toBeTruthy();
   });
 });
 
