@@ -90,3 +90,35 @@ JSON input: data: {"id":"chatcmpl-mock-590…
 2. **Add a small per-frame delay** (configurable; ~30–50 ms default, or a `frameDelayMs` field on the custom-scenario turn) so a long thinking block streams over several seconds.
 
 Either alone helps; both together give a comfortable window to navigate to another session mid-thinking and reproduce BUG-3. (Plugin-side, the durable fix is the `viewedSessionId` guard on the `appendToThinking` push at `AgentController.kt:518`, and/or a source UI test — see BUG-REPRO-RESULTS.md → BUG-3.)
+
+---
+
+## REQ-6 — 🟡 Mock Jira issue-link `type` omits `inward`/`outward` → plugin throws and the whole Sprint board fails to load
+
+**Status:** Functional — breaks the Sprint dashboard data load on the mock. **Found:** 2026-06-29, Phase-1 split smoke (Sprint tab).
+
+**What happens:** the mock Jira's search/issue JSON returns `fields.issuelinks[].type` **without** the `inward`/`outward` label strings. The plugin's `JiraIssueLinkType` (`jira/api/dto/JiraDtos.kt:82`) marks both as **required, non-nullable, no default**, so `JiraApiClient.getSprintIssues` deserialization throws `MissingFieldException: Fields [inward, outward] are required … at path $.issues[0].fields.issuelinks[0].type`, unhandled in `Dispatchers.IO` → the sprint board can't populate.
+
+**Second manifestation (2026-06-29, A-alone run):** with slightly different mock data the same load fails one level deeper — `MissingFieldException: Field 'fields' is required for type 'JiraLinkedIssue' … at $.issues[0].fields.issuelinks[0].outwardIssue`. So the mock's `issuelinks[]` entries are incomplete in **two** ways: (a) `type` lacks `inward`/`outward`, and (b) `inwardIssue`/`outwardIssue` lack a `fields` object. Real Jira includes both.
+
+**Suggested change (mock):** make every `issuelinks[]` entry complete — `type` with `inward`/`outward` (e.g. `"type": { "name": "Blocks", "inward": "is blocked by", "outward": "blocks" }`) **and** each `inwardIssue`/`outwardIssue` with at least a minimal `fields` object (`status`, `summary`, `issuetype`). Applies to any issue fixture carrying `issuelinks`.
+
+**Plugin-side follow-up (not the mock):** harden `JiraIssueLinkType` so a missing `inward`/`outward` (or an unexpected link shape) can't abort the entire sprint-issues parse — make them nullable/defaulted or decode with `coerceInputValues`/`ignoreUnknownKeys`. Tracked in SPLIT-PHASE1-SMOKE-RESULTS.md → "NEW BUG".
+
+---
+
+## REQ-7 — 🟡 No non-Software (non-agile) Jira scenario to verify the Sprint-tab HIDE path
+
+**Status:** Non-blocking; blocks one direction of Phase-1 Item 3 / split `WorkflowTabProvider.isAvailable`. **Found:** 2026-06-29.
+
+**What's needed:** the mock Jira currently presents as a **Software/agile** project (board discovery succeeds, `Active sprint: Sprint 2026.11 (id=7)`), so the Sprint tab is correctly **shown**. To verify the **hidden-when-non-Software** branch, the mock needs a toggle/scenario (e.g. `/__admin` on 8180) where the agile/board capability probe returns **not-agile** (no boards / `404` on the agile API), so `JiraAgileCapabilityService` resolves non-Software and the Sprint tab disappears on tool-window rebuild.
+
+---
+
+## REQ-8 — 🟡 Mock Bamboo project/plan-listing 404s → can't add an automation suite → Phase-2 check 2.3 (`ManualStageDialog`) can't be reached
+
+**Status:** Non-blocking, but it **blocks Phase-2 runIde check 2.3** (the ⭐ cross-plugin classloader test). **Found:** 2026-06-29, A+B runIde smoke, Bamboo configured to `http://localhost:8280`.
+
+**What happens:** Bamboo *connects* ("Bamboo connected ✓"), but **Settings → Workflow Orchestrator → Automation → "Add suite by browsing Bamboo projects"** shows **Project: "Failed: …resource not found"** — the mock's Bamboo project-listing endpoint returns 404. With no projects/plans, no automation **suite** can be added, the Automation tab's **SUITE** dropdown stays empty, and **"Trigger Customized…"** has **no stages** to act on — so clicking it does nothing and the `ManualStageDialog` (the `:bamboo` class that B's automation panel calls across the plugin classloader) never opens. (No `NoClassDefFoundError` — the panel/menu load fine; there's simply no stage data.)
+
+**Suggested change (mock):** add a Bamboo scenario that returns **at least one project → plan → with ≥1 stage** from the project/plan-listing endpoints the plugin queries (so a suite can be added and the plan exposes stages). Then: configure Bamboo → Settings → Automation → add the plan as a suite → Automation tab SUITE populates → **Trigger ▾ → "Trigger Customized…"** opens `ManualStageDialog`, completing check 2.3. (Until then, 2.3 stays **deferred**, per the run-sheet's "don't force it" guidance.)
