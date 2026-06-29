@@ -463,3 +463,7 @@ Confirmed.
 it as a B-preset value. Phase 1a deferred fresh-company-install restoration to B's preset (upgraders
 already received `"develop"` via the 1a migration; the seeder's guard skips them). This is the
 intended company default for new installs. Confirmed.
+
+## 24. Phase 3 resolved (2026-06-29)
+
+**Persona / skill hardening.** `security-auditor` + `performance-engineer` are now gated on `supportsSpring` across all three advertisement surfaces — `AgentConfigLoader.filterByIdeContext` (Site A, live list), the `SystemPrompt.kt` "# Subagent Delegation" prose (Site B), and the three routing pointers in `code-reviewer.md` / `architect-reviewer.md` / `subagent-driven/SKILL.md` (Site C). The gate is **advisory**: `SpawnAgentTool.execute()` resolves a named persona via the unfiltered `getCachedConfig`, so an explicit by-name spawn still runs (degraded, its `spring` tool absent) — intended escape hatch, kept by user decision. `git-workflow/SKILL.md` neutralized to generic git + a conditional PR/CI section that retains the OSS-generic `bitbucket_pr`/`bamboo_builds` action bullets. 6 golden snapshots regenerated (4 orchestrator two-line deletions + 2 sub-agent pointer rewordings). **Deferred to Phase 5:** `devops-engineer` → B; physical repo extraction; the sibling-skill Atlassian/`master` coupling in `systematic-debugging`/`create-skill`. Predicate = `supportsSpring` for both and gate = advisory + fixed routing pointers were USER decisions (2026-06-29). Spec: `docs/superpowers/specs/2026-06-29-plugin-split-phase3-design.md`.

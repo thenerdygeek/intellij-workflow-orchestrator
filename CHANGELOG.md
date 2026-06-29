@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   framework with backfilled records (roadmap Phase 1).
 - Enforcement foundation (roadmap Phase 0): GitHub Actions CI (build, test, detekt lint,
   Konsist architecture tests), per-module detekt baselines, and Dependabot CVE scanning.
+- The `security-auditor` and `performance-engineer` specialist agents are now offered only on Spring projects (Java + the IntelliJ Spring plugin); they remain spawnable explicitly by name on any project.
 
 ### Fixed
 
