@@ -1,3 +1,4 @@
+
 // Root build.gradle.kts — applies the main IntelliJ Platform plugin.
 // Submodules use org.jetbrains.intellij.platform.module instead.
 
@@ -326,9 +327,27 @@ intellijPlatform {
 // BaseUrlValidator's SSRF guard otherwise rejects localhost / 127.0.0.1 / private-LAN URLs; this
 // system property flips that guard's dev-only escape hatch ON. Sandbox-only — the shipped plugin
 // never sets it, so production keeps full SSRF protection.
-tasks.withType<org.jetbrains.intellij.platform.gradle.tasks.RunIdeTask>().configureEach {
-    jvmArgumentProviders += CommandLineArgumentProvider {
-        listOf("-Dworkflow.orchestrator.allowPrivateUrls=true")
+//
+// MUST be `allprojects`, not a bare root `tasks.withType`: the A+B split sandbox is the
+// `:plugin-b:runIde` task, which lives in the :plugin-b subproject's OWN task container. A
+// root-scoped `tasks.withType<RunIdeTask>()` only configures the root `:runIde` (A-alone), so
+// `:plugin-b:runIde` would silently miss BOTH flags below — the SSRF guard then rejects the
+// mock URLs (localhost) on the A+B sandbox even though A-alone works.
+allprojects {
+    tasks.withType<org.jetbrains.intellij.platform.gradle.tasks.RunIdeTask>().configureEach {
+        jvmArgumentProviders += CommandLineArgumentProvider {
+            listOf(
+                "-Dworkflow.orchestrator.allowPrivateUrls=true",
+                // Disable IntelliJ's live plugin auto-reload in the dev sandbox. The full A+B
+                // plugin (companyb especially) is NOT dynamically unload-safe, so when a
+                // background `./gradlew` build rewrites automation.jar / handover.jar under a
+                // RUNNING sandbox, the failed hot-reload silently STRIPS Company B's tabs and
+                // settings pages ("class loader cannot be unloaded") while core config survives.
+                // Off = a jar change is ignored until the next relaunch, keeping the QA sandbox
+                // UI stable. Trade-off: code changes need a sandbox relaunch to take effect.
+                "-Didea.auto.reload.plugins=false",
+            )
+        }
     }
 }
 
