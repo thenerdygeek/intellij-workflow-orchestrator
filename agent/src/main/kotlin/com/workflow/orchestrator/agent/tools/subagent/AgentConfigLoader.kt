@@ -219,6 +219,8 @@ class AgentConfigLoader private constructor() : Disposable {
     /**
      * Filter loaded agent configs based on IDE context.
      * Language-specific agents are excluded when their language isn't available.
+     * Spring-specialist agents ([security-auditor], [performance-engineer]) are excluded
+     * when [IdeContext.supportsSpring] is false (no Spring plugin or no Java).
      * Universal agents (code-reviewer, architect-reviewer, etc.) are always included.
      *
      * When [ideContext] is null (e.g. tests or pre-detection), all configs are returned
@@ -230,6 +232,8 @@ class AgentConfigLoader private constructor() : Disposable {
             when (config.name.lowercase()) {
                 "spring-boot-engineer" -> ideContext.supportsJava
                 "python-engineer" -> ideContext.supportsPython  // ships with Plan C
+                "security-auditor" -> ideContext.supportsSpring
+                "performance-engineer" -> ideContext.supportsSpring
                 else -> true // universal agents always available
             }
         }

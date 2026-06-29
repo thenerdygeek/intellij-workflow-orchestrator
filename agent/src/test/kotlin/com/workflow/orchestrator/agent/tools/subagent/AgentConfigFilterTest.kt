@@ -112,6 +112,53 @@ class AgentConfigFilterTest {
         assertFalse("spring-boot-engineer" in names)
     }
 
+    private val springGatedConfigs = listOf(
+        makeConfig("code-reviewer", "Code review"),
+        makeConfig("security-auditor", "Security audit"),
+        makeConfig("performance-engineer", "Performance optimization"),
+    )
+
+    @Test
+    fun `security-auditor and performance-engineer present when supportsSpring`() {
+        val context = makeIdeContext(
+            product = IdeProduct.INTELLIJ_ULTIMATE,
+            supportsJava = true,
+            supportsPython = false,
+            hasSpring = true,
+        )
+        val names = loader.filterByIdeContext(springGatedConfigs, context).map { it.name }
+        assertTrue("security-auditor" in names)
+        assertTrue("performance-engineer" in names)
+        assertTrue("code-reviewer" in names)
+    }
+
+    @Test
+    fun `security-auditor and performance-engineer absent on Java without Spring plugin`() {
+        val context = makeIdeContext(
+            product = IdeProduct.INTELLIJ_COMMUNITY,
+            supportsJava = true,
+            supportsPython = false,
+            hasSpring = false,
+        )
+        val names = loader.filterByIdeContext(springGatedConfigs, context).map { it.name }
+        assertFalse("security-auditor" in names)
+        assertFalse("performance-engineer" in names)
+        assertTrue("code-reviewer" in names)
+    }
+
+    @Test
+    fun `security-auditor and performance-engineer absent in non-Java context`() {
+        val context = makeIdeContext(
+            product = IdeProduct.PYCHARM_COMMUNITY,
+            supportsJava = false,
+            supportsPython = true,
+            hasSpring = false,
+        )
+        val names = loader.filterByIdeContext(springGatedConfigs, context).map { it.name }
+        assertFalse("security-auditor" in names)
+        assertFalse("performance-engineer" in names)
+    }
+
     private fun makeConfig(name: String, description: String) = AgentConfig(
         name = name,
         description = description,
@@ -122,7 +169,12 @@ class AgentConfigFilterTest {
         bundled = true,
     )
 
-    private fun makeIdeContext(product: IdeProduct, supportsJava: Boolean, supportsPython: Boolean) = IdeContext(
+    private fun makeIdeContext(
+        product: IdeProduct,
+        supportsJava: Boolean,
+        supportsPython: Boolean,
+        hasSpring: Boolean = false,
+    ) = IdeContext(
         product = product,
         productName = product.name,
         edition = Edition.COMMUNITY,
@@ -133,7 +185,7 @@ class AgentConfigFilterTest {
         hasJavaPlugin = supportsJava,
         hasPythonPlugin = supportsPython,
         hasPythonCorePlugin = supportsPython,
-        hasSpringPlugin = false,
+        hasSpringPlugin = hasSpring,
         detectedFrameworks = emptySet(),
         detectedBuildTools = emptySet(),
     )
