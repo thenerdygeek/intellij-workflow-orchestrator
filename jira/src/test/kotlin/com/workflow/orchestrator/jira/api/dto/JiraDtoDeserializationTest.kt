@@ -57,4 +57,37 @@ class JiraDtoDeserializationTest {
         assertEquals("In Progress", result.transitions[1].name)
         assertEquals("21", result.transitions[1].id)
     }
+
+    // P2 robustness: some Jira link-type configs omit inward/outward; must not throw MissingFieldException
+    @Test
+    fun `JiraIssueLinkType decodes when inward and outward are absent`() {
+        val linkTypeJson = """{"name":"Blocks"}"""
+        val result = json.decodeFromString<JiraIssueLinkType>(linkTypeJson)
+        assertEquals("Blocks", result.name)
+        assertEquals("", result.inward)
+        assertEquals("", result.outward)
+    }
+
+    @Test
+    fun `JiraIssueLink decodes when link type omits inward and outward`() {
+        val issueLinkJson = """
+            {
+              "id": "100",
+              "type": {"name": "Blocks"},
+              "inwardIssue": {
+                "key": "PROJ-1",
+                "fields": {
+                  "summary": "Some issue",
+                  "status": {"name": "Open"}
+                }
+              }
+            }
+        """.trimIndent()
+        val result = json.decodeFromString<JiraIssueLink>(issueLinkJson)
+        assertEquals("100", result.id)
+        assertEquals("Blocks", result.type.name)
+        assertEquals("", result.type.inward)
+        assertEquals("", result.type.outward)
+        assertEquals("PROJ-1", result.inwardIssue?.key)
+    }
 }

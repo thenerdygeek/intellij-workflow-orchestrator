@@ -83,8 +83,8 @@ data class JiraIssueLink(
 data class JiraIssueLinkType(
     val id: String? = null,
     val name: String,
-    val inward: String,
-    val outward: String
+    val inward: String = "",
+    val outward: String = ""
 )
 
 @Serializable
