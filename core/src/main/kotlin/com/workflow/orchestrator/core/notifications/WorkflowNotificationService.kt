@@ -25,10 +25,12 @@ class WorkflowNotificationService(private val project: Project) {
 
     private fun notify(groupId: String, title: String, content: String, type: NotificationType) {
         log.info("[Core:Notifications] Sending ${type.name} notification — group=$groupId, title=\"$title\"")
-        NotificationGroupManager.getInstance()
-            .getNotificationGroup(groupId)
-            .createNotification(title, content, type)
-            .notify(project)
+        val group = NotificationGroupManager.getInstance().getNotificationGroup(groupId)
+        if (group == null) {
+            log.warn("[Core:Notifications] notification group '$groupId' is not registered; dropping ${type.name} notification \"$title\"")
+            return
+        }
+        group.createNotification(title, content, type).notify(project)
     }
 
     companion object {

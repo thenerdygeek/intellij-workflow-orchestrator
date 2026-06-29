@@ -60,5 +60,7 @@
         <projectService serviceImplementation="com.workflow.orchestrator.handover.service.HandoverOverrideTracker"/>
         <postStartupActivity implementation="com.workflow.orchestrator.handover.service.HandoverOverrideTrackerActivity"/>
         <notificationGroup id="workflow.handover" displayType="BALLOON"/>
+        <notificationGroup id="workflow.handover.wiki" displayType="BALLOON"/>
+        <notificationGroup id="workflow.handover.wiki.transient" displayType="BALLOON"/>
     </extensions>
 </idea-plugin>

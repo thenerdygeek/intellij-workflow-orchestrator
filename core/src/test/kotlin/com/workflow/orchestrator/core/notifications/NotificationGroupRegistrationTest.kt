@@ -79,6 +79,36 @@ class NotificationGroupRegistrationTest {
         }
     }
 
+    /**
+     * Source-text pin: asserts that [WorkflowNotificationService.notify] contains the null-guard
+     * introduced to fix the NPE when an unregistered group ID is passed
+     * (e.g. `workflow.handover.wiki` before it was declared in plugin-b's plugin.xml).
+     *
+     * We use a source-text pin here rather than a behavioural test because exercising
+     * [com.intellij.notification.NotificationGroupManager.getNotificationGroup] requires the full
+     * IntelliJ platform to be initialised (it is a static EP registry backed by plugin.xml
+     * registration), which in turn needs a `BasePlatformTestCase` fixture. The one-test-per-class
+     * constraint on `:core` platform tests makes that infeasible alongside the existing test class;
+     * a source pin gives an equivalent regression-prevention guarantee with no platform dependency.
+     */
+    @Test
+    fun `notify method contains null-guard for unregistered group id`() {
+        val src = java.io.File(
+            "src/main/kotlin/com/workflow/orchestrator/core/notifications/WorkflowNotificationService.kt"
+        ).readText()
+
+        assertTrue(src.contains("if (group == null)")) {
+            "WorkflowNotificationService.notify() must null-check the result of " +
+                "NotificationGroupManager.getNotificationGroup(groupId). " +
+                "A null result (unregistered group) must be logged at WARN and return early — " +
+                "not chain .createNotification() which would NPE at runtime."
+        }
+        assertTrue(src.contains("log.warn(")) {
+            "WorkflowNotificationService.notify() must log a WARN when the group is null so the " +
+                "problem is diagnosable from the IDE log without a crash."
+        }
+    }
+
     // ---------------------------------------------------------------------------
     // Helpers
     // ---------------------------------------------------------------------------
