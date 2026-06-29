@@ -90,4 +90,32 @@ class JiraDtoDeserializationTest {
         assertEquals("", result.type.outward)
         assertEquals("PROJ-1", result.inwardIssue?.key)
     }
+
+    // Regression: restricted/partial visibility — inwardIssue has no "fields" key at all.
+    // Before the fix this threw MissingFieldException and blanked the entire sprint board.
+    @Test
+    fun `JiraLinkedIssue decodes when fields key is absent (restricted visibility)`() {
+        val issueLinkJson = """
+            {
+              "id": "200",
+              "type": {"name": "Relates"},
+              "inwardIssue": {
+                "key": "RESTRICTED-99"
+              }
+            }
+        """.trimIndent()
+        val result = json.decodeFromString<JiraIssueLink>(issueLinkJson)
+        assertEquals("RESTRICTED-99", result.inwardIssue?.key)
+        assertEquals("", result.inwardIssue?.fields?.summary)
+        assertEquals("", result.inwardIssue?.fields?.status?.name)
+    }
+
+    // Regression: fields present but status omitted (e.g. filtered API response).
+    @Test
+    fun `JiraLinkedIssueFields decodes when status key is absent`() {
+        val fieldsJson = """{"summary": "Partial issue"}"""
+        val result = json.decodeFromString<JiraLinkedIssueFields>(fieldsJson)
+        assertEquals("Partial issue", result.summary)
+        assertEquals("", result.status.name)
+    }
 }

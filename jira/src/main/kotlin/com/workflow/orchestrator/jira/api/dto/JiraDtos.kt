@@ -89,14 +89,14 @@ data class JiraIssueLinkType(
 
 @Serializable
 data class JiraLinkedIssue(
-    val key: String,
-    val fields: JiraLinkedIssueFields
+    val key: String = "",
+    val fields: JiraLinkedIssueFields = JiraLinkedIssueFields()
 )
 
 @Serializable
 data class JiraLinkedIssueFields(
-    val summary: String,
-    val status: JiraStatus
+    val summary: String = "",
+    val status: JiraStatus = JiraStatus(name = "")
 )
 
 @Serializable
