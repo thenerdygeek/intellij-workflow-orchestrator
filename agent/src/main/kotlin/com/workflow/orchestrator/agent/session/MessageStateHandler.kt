@@ -35,7 +35,7 @@ data class ApiHistoryFile(
 class MessageStateHandler(
     private val baseDir: File,
     val sessionId: String,
-    val taskText: String,
+    taskText: String,
     /** Clock seam for the partial-save + api-save + global-index throttles (deterministic tests); production default. */
     private val uiSaveClock: () -> Long = { System.currentTimeMillis() },
     /**
@@ -46,6 +46,21 @@ class MessageStateHandler(
     private val toolProtocol: com.workflow.orchestrator.core.ai.protocol.ToolProtocol =
         com.workflow.orchestrator.core.ai.protocol.XmlToolProtocol(),
 ) {
+    /**
+     * Human title for this session, seeded at construction from the first user
+     * message (or the title persisted by a prior turn) and written into the global
+     * index entry's `task` field by every [updateGlobalIndex] flush.
+     *
+     * Mutable so a generated/refined title ([updateTitle]) becomes the SINGLE source
+     * of truth: once updated, the periodic index flush stops reverting the History
+     * card title back to the original first-message text. The chat header (in-memory
+     * in AgentController) and this value are kept in lockstep by routing both through
+     * the same sanitized title.
+     */
+    @Volatile
+    var taskText: String = taskText
+        private set
+
     private val mutex = Mutex()
     // Delegate to the shared, polymorphic-fallback-enabled Json instance in the
     // companion object so reads and writes share the same defensive deserialization
@@ -711,6 +726,27 @@ class MessageStateHandler(
         updateGlobalIndex()
     }
 
+    /**
+     * Update the human title for the LIVE session — the single writer the chat header
+     * and the History index converge on.
+     *
+     * Sanitizes the incoming title ([TitleSanitizer] strips `<thinking>` blocks, fenced
+     * code, and markdown so a raw assistant message can never become a title), updates
+     * the in-memory [taskText] so the periodic [updateGlobalIndex] flush stops reverting
+     * the History card to the original first-message text, and immediately rewrites
+     * `sessions.json` via the same atomic globalIndexMutex + file-lock path used by every
+     * other index mutation.
+     *
+     * No-op when the sanitized title is blank (keeps the prior title). Safe to call from
+     * any coroutine — suspends on the session mutex, no EDT.
+     */
+    suspend fun updateTitle(title: String) = mutex.withLock {
+        val clean = TitleSanitizer.sanitize(title).take(200)
+        if (clean.isBlank()) return@withLock
+        taskText = clean
+        updateGlobalIndex()
+    }
+
     suspend fun saveBoth() = mutex.withLock {
         saveInternal()
         saveApiHistoryInternal()
@@ -963,13 +999,19 @@ class MessageStateHandler(
         /**
          * Rewrite the `task` field on the existing index entry for [sessionId].
          * Used to replace the auto-generated first-message-takes-200 task text with a
-         * descriptive title (e.g. from the Haiku-generated session title pass).
+         * descriptive title (e.g. from the Haiku-generated session title pass) for a
+         * session that is NOT the currently-active in-memory handler (the live session
+         * routes through the instance [updateTitle] so its in-memory [taskText] stays in
+         * sync). The title is sanitized so a raw assistant message can never persist as a
+         * History card title.
          *
          * No-op if the entry doesn't exist. Uses the same cross-process file lock as
          * the rest of the index mutators so it can't race other windows.
          */
         fun updateSessionTitle(baseDir: File, sessionId: String, title: String) {
             if (!sessionId.matches(SAFE_SESSION_ID)) return
+            val clean = TitleSanitizer.sanitize(title)
+            if (clean.isBlank()) return
             val indexFile = File(baseDir, "sessions.json")
             if (!indexFile.exists()) return
             withGlobalIndexFileLock(baseDir) {
@@ -978,7 +1020,7 @@ class MessageStateHandler(
                     val idx = items.indexOfFirst { it.id == sessionId }
                     if (idx < 0) return@withGlobalIndexFileLock
                     val updated = items.toMutableList().also {
-                        it[idx] = it[idx].copy(task = title.take(200))
+                        it[idx] = it[idx].copy(task = clean.take(200))
                     }
                     AtomicFileWriter.write(indexFile, configuredPrettyJson.encodeToString(updated))
                 } catch (_: Exception) { /* corrupted index, skip */ }

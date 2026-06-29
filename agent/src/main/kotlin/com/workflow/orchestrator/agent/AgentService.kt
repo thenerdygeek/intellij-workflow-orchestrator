@@ -31,6 +31,7 @@ import com.workflow.orchestrator.agent.prompt.SystemPrompt
 import com.workflow.orchestrator.core.settings.PluginSettings
 import com.workflow.orchestrator.agent.session.AtomicFileWriter
 import com.workflow.orchestrator.agent.session.TaskStore
+import com.workflow.orchestrator.agent.session.TitleSanitizer
 import com.workflow.orchestrator.agent.session.Session
 import com.workflow.orchestrator.agent.session.SessionStatus
 import com.workflow.orchestrator.agent.session.HistoryItem
@@ -2294,9 +2295,19 @@ class AgentService(
                     val existingUi = if (sessionDir.exists()) MessageStateHandler.loadUiMessages(sessionDir) else emptyList()
                     val existingApi = if (sessionDir.exists()) MessageStateHandler.loadApiHistory(sessionDir) else emptyList()
 
-                    // For follow-up turns, use the original task text from the first message
+                    // For follow-up turns, seed the title from what History already
+                    // shows. Prefer the title persisted by a prior turn (may be a
+                    // Haiku-generated descriptive title) so a follow-up turn does not
+                    // revert the History card; else the first USER message. NEVER the
+                    // first assistant `UiSay.TEXT` message — that is raw assistant prose
+                    // (with `<thinking>`/fenced code) and leaked into History card titles
+                    // (the QA-found raw-`<thinking>` title). Sanitized at the boundary.
                     val resolvedTaskText = if (existingUi.isNotEmpty()) {
-                        existingUi.firstOrNull { it.say == UiSay.TEXT }?.text?.take(200) ?: task.take(200)
+                        val seed = MessageStateHandler.findHistoryItem(sessionBaseDir, sid)?.task
+                            ?.takeIf { it.isNotBlank() }
+                            ?: existingUi.firstOrNull { it.say == UiSay.USER_MESSAGE }?.text
+                            ?: task
+                        TitleSanitizer.sanitize(seed).take(200).ifBlank { task.take(200) }
                     } else {
                         task.take(200)
                     }
@@ -3207,13 +3218,28 @@ class AgentService(
      * Update the title of an existing session (e.g. after Haiku generates a descriptive title).
      * Updates the global index entry for this session with the new title/task text.
      *
-     * Delegates to [MessageStateHandler.updateSessionTitle] so the same cross-process
-     * file lock that protects deleteSession / toggleFavorite / updateGlobalIndex
-     * also serializes this write.
+     * For the LIVE session, routes through the active [MessageStateHandler.updateTitle]
+     * so the in-memory `taskText` is updated too — otherwise the periodic
+     * `updateGlobalIndex` flush would revert the History card to the original
+     * first-message text (the header/History divergence). For any other (non-active)
+     * session, falls back to the companion [MessageStateHandler.updateSessionTitle],
+     * which shares the same cross-process file lock as deleteSession / toggleFavorite /
+     * updateGlobalIndex. Both paths sanitize the title via [TitleSanitizer].
      */
     fun updateSessionTitle(sessionId: String, title: String) {
         try {
-            MessageStateHandler.updateSessionTitle(agentDir, sessionId, title)
+            val handler = activeMessageStateHandler
+            if (handler != null && handler.sessionId == sessionId) {
+                cs.launch(Dispatchers.IO) {
+                    try {
+                        handler.updateTitle(title)
+                    } catch (e: Exception) {
+                        log.warn("AgentService.updateSessionTitle: live title update failed (non-fatal)", e)
+                    }
+                }
+            } else {
+                MessageStateHandler.updateSessionTitle(agentDir, sessionId, title)
+            }
         } catch (e: Exception) {
             log.warn("AgentService.updateSessionTitle: failed to update title (non-fatal)", e)
         }

@@ -5395,9 +5395,14 @@ class AgentController(
         LOG.info("AgentController: provisional title set from user message: '$provisional'")
     }
 
-    /** Trim the user's first message to a display-friendly title under 50 chars. */
+    /**
+     * Trim the user's first message to a display-friendly title under 50 chars.
+     * Sanitized via [TitleSanitizer] so a pasted `<thinking>`/code-laden message can
+     * never become a title \u2014 the same value is used for the header and the persisted
+     * History index, so both stay in lockstep.
+     */
     private fun deriveInitialTitle(task: String): String {
-        val cleaned = task.trim().replace(Regex("\\s+"), " ")
+        val cleaned = com.workflow.orchestrator.agent.session.TitleSanitizer.sanitize(task)
         return if (cleaned.length <= 50) cleaned else cleaned.take(49).trimEnd() + "\u2026"
     }
 
@@ -5416,11 +5421,18 @@ class AgentController(
 
         controllerScope.launch(Dispatchers.IO) {
             try {
-                val newTitle = HaikuPhraseGenerator.evaluateTitleFromCompletion(
+                val rawNewTitle = HaikuPhraseGenerator.evaluateTitleFromCompletion(
                     currentTitle = currentTitle,
                     userMessage = userMessage,
                     assistantResponse = assistantResponse,
                 ) ?: return@launch
+
+                // Sanitize once and use the SAME value for both the header and the
+                // persisted History index so they can never diverge (the Haiku result
+                // is derived from model output and could carry stray markup).
+                val newTitle = com.workflow.orchestrator.agent.session.TitleSanitizer
+                    .sanitize(rawNewTitle).take(50)
+                if (newTitle.isBlank()) return@launch
 
                 currentHaikuTitle = newTitle
                 currentSessionId?.let { service.updateSessionTitle(it, newTitle) }
