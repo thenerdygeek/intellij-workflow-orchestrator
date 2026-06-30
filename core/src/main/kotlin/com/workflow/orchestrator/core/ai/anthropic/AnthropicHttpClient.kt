@@ -7,7 +7,9 @@ import com.workflow.orchestrator.core.http.IdeTrust
 import com.workflow.orchestrator.core.model.ApiResult
 import com.workflow.orchestrator.core.model.ErrorType
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.InternalCoroutinesApi
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import okhttp3.MediaType.Companion.toMediaType
@@ -81,6 +83,7 @@ class AnthropicHttpClient(
 
     // ── Public API ─────────────────────────────────────────────────────────────
 
+    @OptIn(InternalCoroutinesApi::class)
     override suspend fun postStream(
         request: AnthropicRequest,
         onLine: (String) -> Unit,
@@ -101,7 +104,7 @@ class AnthropicHttpClient(
         // Propagate coroutine cancellation to OkHttp so the brain's interruptStream()/
         // cancelActiveRequest() (which cancel the coroutine) abort the in-flight call
         // instead of blocking up to readTimeout.
-        coroutineContext[Job]?.invokeOnCompletion { cause -> if (cause != null) call.cancel() }
+        coroutineContext[Job]?.invokeOnCompletion(onCancelling = true) { cause -> if (cause != null) call.cancel() }
 
         try {
             call.execute().use { response ->
@@ -119,6 +122,7 @@ class AnthropicHttpClient(
                 // readUtf8Line() handles LF and CRLF line endings.
                 responseBody?.source()?.let { source ->
                     while (!source.exhausted()) {
+                        coroutineContext.ensureActive() // stop promptly if cancelled
                         val line = source.readUtf8Line() ?: break
                         onLine(line)
                     }
