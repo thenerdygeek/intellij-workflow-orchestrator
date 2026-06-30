@@ -104,8 +104,11 @@ open class ModelCatalogService(
      * to the top-level `contextWindow` only when no tier override exists.
      *
      * Returns `null` if catalog not loaded or model unknown.
+     *
+     * `open` so [AnthropicModelCatalogService] can serve the static native catalog on the
+     * Anthropic provider (the Sourcegraph-backed default keeps this exact behavior).
      */
-    fun getContextWindow(modelRef: String, tier: String = "enterprise"): ContextWindow? {
+    open fun getContextWindow(modelRef: String, tier: String = "enterprise"): ContextWindow? {
         val model = cachedCatalog?.models?.firstOrNull { it.modelRef == modelRef } ?: return null
         return model.modelConfigAllTiers?.get(tier)?.contextWindow
             ?: model.contextWindow

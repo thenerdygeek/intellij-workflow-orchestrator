@@ -886,6 +886,29 @@ class AgentService(
     }
 
     /**
+     * Phase 4a Task 3 — native Anthropic catalog selection.
+     *
+     * On the native Anthropic provider the [sharedCatalogHolder] is keyed on a blank
+     * Sourcegraph URL with no token, so [getSharedModelCatalog] / `sharedCatalogHolder.peek()`
+     * serve null and every context-window lookup falls back to the 90K floor — which would
+     * compact `claude-opus-4-8` (1M) at ~79K. When the provider is `"anthropic"` we serve the
+     * static [com.workflow.orchestrator.core.ai.AnthropicModelCatalog] instead, keyed on the
+     * bare model id.
+     */
+    private val anthropicModelCatalog by lazy {
+        com.workflow.orchestrator.core.ai.AnthropicModelCatalogService()
+    }
+
+    private fun isNativeAnthropicProvider(): Boolean =
+        AgentSettings.getInstance(project).state.llmProvider == "anthropic"
+
+    /** The catalog the active provider should use for window sizing + capability lookups. */
+    private fun selectModelCatalog(
+        shared: com.workflow.orchestrator.core.ai.ModelCatalogService?,
+    ): com.workflow.orchestrator.core.ai.ModelCatalogService? =
+        if (isNativeAnthropicProvider()) anthropicModelCatalog else shared
+
+    /**
      * v0.83.44 — factory for an AgentController-side [ContextManager] that
      * is correctly wired to the shared model catalog so compaction and
      * utilization track the active model's per-tier `maxInputTokens` from
@@ -895,7 +918,7 @@ class AgentService(
      */
     fun newContextManager(): ContextManager = ContextManager(
         maxInputTokens = ContextManager.FALLBACK_MAX_INPUT_TOKENS,
-        modelCatalogService = getSharedModelCatalog(),
+        modelCatalogService = selectModelCatalog(getSharedModelCatalog()),
         currentModelRef = { currentBrainModelId },
         effectiveContextWindow = effectiveContextWindow,
     )
@@ -903,7 +926,7 @@ class AgentService(
     @get:JvmName("effectiveContextWindowInternal")
     private val effectiveContextWindow: com.workflow.orchestrator.agent.model.EffectiveContextWindow by lazy {
         com.workflow.orchestrator.agent.model.EffectiveContextWindow(
-            windowLookup = { id -> sharedCatalogHolder.peek()?.getContextWindow(id) },
+            windowLookup = { id -> selectModelCatalog(sharedCatalogHolder.peek())?.getContextWindow(id) },
             overrides = {
                 com.workflow.orchestrator.agent.settings.AgentSettings
                     .getInstance(project).state.maxTokenOverridesSnapshot()
@@ -2051,7 +2074,7 @@ class AgentService(
                 // budget now follows the active model via Sourcegraph's catalog.
                 val ctx = contextManager ?: ContextManager(
                     maxInputTokens = ContextManager.FALLBACK_MAX_INPUT_TOKENS,
-                    modelCatalogService = sharedCatalogHolder.peek(),
+                    modelCatalogService = selectModelCatalog(sharedCatalogHolder.peek()),
                     currentModelRef = { currentBrainModelId },
                     effectiveContextWindow = effectiveContextWindow,
                 )
@@ -2570,8 +2593,9 @@ class AgentService(
                     // to vision-capable models via ModelCatalogService.supportsVision().
                     // sharedCatalog is warmed up at session start so the first
                     // image-bearing escalation decision sees authoritative data, not
-                    // always-false from cold cache.
-                    modelCatalogService = sharedCatalog,
+                    // always-false from cold cache. On the native Anthropic provider the
+                    // static catalog is served instead (sharedCatalog is empty there).
+                    modelCatalogService = selectModelCatalog(sharedCatalog),
                     onModelSwitch = onModelSwitch,
                     compactOnTimeoutExhaustion = compactOnTimeoutExhaustion,
                     pendingModelChangeProvider = { pendingModelChange.get() },
