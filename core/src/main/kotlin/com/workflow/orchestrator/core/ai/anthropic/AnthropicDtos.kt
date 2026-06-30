@@ -21,7 +21,7 @@ import kotlinx.serialization.json.JsonElement
 @Serializable
 data class AnthropicRequest(
     val model: String,
-    val system: List<TextBlock>,
+    val system: List<TextBlock> = emptyList(),
     val messages: List<AnthropicMessage>,
     val tools: List<AnthropicTool>? = null,
     @SerialName("max_tokens") val maxTokens: Int,
@@ -103,6 +103,7 @@ data class InputSchema(
 data class InputSchemaProperty(
     val type: String,
     val description: String? = null,
+    @SerialName("enum") val enumValues: List<String>? = null,
     val items: InputSchemaProperty? = null,
 )
 

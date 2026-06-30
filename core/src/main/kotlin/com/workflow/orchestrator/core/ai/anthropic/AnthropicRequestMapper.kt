@@ -148,6 +148,7 @@ object AnthropicRequestMapper {
     private fun mapProperty(prop: ParameterProperty): InputSchemaProperty = InputSchemaProperty(
         type = prop.type,
         description = prop.description,
+        enumValues = prop.enumValues,
         items = prop.items?.let { mapProperty(it) },
     )
 }

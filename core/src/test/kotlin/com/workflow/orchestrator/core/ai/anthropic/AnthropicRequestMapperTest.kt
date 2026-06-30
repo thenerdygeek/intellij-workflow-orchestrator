@@ -183,4 +183,33 @@ class AnthropicRequestMapperTest {
         assertEquals("array", globs.type)
         assertEquals("string", globs.items!!.type)
     }
+
+    @Test
+    fun `enum param carries enum constraint into input_schema`() {
+        val enumTool = ToolDefinition(
+            function = FunctionDefinition(
+                "set_status",
+                "s",
+                FunctionParameters(
+                    properties = mapOf(
+                        "status" to ParameterProperty(
+                            "string",
+                            "the status",
+                            enumValues = listOf("open", "done"),
+                        ),
+                    ),
+                ),
+            ),
+        )
+        val prop = AnthropicRequestMapper.build(
+            listOf(ChatMessage("user", "x")),
+            listOf(enumTool),
+            "claude-opus-4-8",
+            4096,
+            false,
+            "high",
+            noImg,
+        ).tools!!.single().inputSchema.properties["status"]!!
+        assertEquals(listOf("open", "done"), prop.enumValues)
+    }
 }
