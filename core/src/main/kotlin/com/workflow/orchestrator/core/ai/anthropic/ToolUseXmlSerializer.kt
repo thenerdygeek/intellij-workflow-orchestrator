@@ -1,5 +1,6 @@
 package com.workflow.orchestrator.core.ai.anthropic
 
+import com.workflow.orchestrator.core.ai.AssistantMessageParser
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
@@ -33,11 +34,12 @@ import kotlinx.serialization.json.JsonPrimitive
 object ToolUseXmlSerializer {
 
     /**
-     * Mirrors [com.workflow.orchestrator.core.ai.AssistantMessageParser.CODE_CARRYING_PARAMS].
-     * Kept private and duplicated here to avoid a coupling dependency on the parser object
-     * just for a constant — the parser's public field is the authoritative source.
+     * References [AssistantMessageParser.CODE_CARRYING_PARAMS] directly — the single
+     * authoritative source.  The collision guard's exemption list must equal the set the
+     * parser uses for its `lastIndexOf` scoping, so sharing the constant eliminates
+     * any risk of silent drift.
      */
-    private val CODE_CARRYING_PARAMS = setOf("content", "new_string", "old_string", "diff", "code")
+    private val CODE_CARRYING_PARAMS = AssistantMessageParser.CODE_CARRYING_PARAMS
 
     private val COMPACT_JSON = Json { prettyPrint = false }
 
