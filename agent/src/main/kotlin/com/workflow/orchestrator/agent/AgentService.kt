@@ -684,9 +684,11 @@ class AgentService(
      * single-instance invariant keeps the "exactly one store per session"
      * design unambiguous and protects against future caching layers.
      *
-     * Initialised on the first [wrapBrainWithRouter] call within a task,
-     * reused by subsequent recycle/fallback wraps for the same session,
-     * cleared in [resetForNewChat] so each chat gets a fresh store.
+     * Initialised in [executeTaskInternal] before [createBrain] is called so the
+     * native Anthropic path has a real store at construction time.
+     * [wrapBrainWithRouter] is a reuse site for the Sourcegraph path (belt-and-suspenders
+     * guard keeps the SG path working if the field is still null) and is skipped entirely
+     * for the Anthropic path. Cleared in [resetForNewChat] so each chat gets a fresh store.
      */
     @Volatile private var activeAttachmentStore:
         com.workflow.orchestrator.agent.session.AttachmentStore? = null
@@ -997,7 +999,7 @@ class AgentService(
      * (no [BrainRouter] needed — [AnthropicDirectBrain] handles image hydration natively);
      * delegates to [wrapBrainWithRouter] for the Sourcegraph path.
      *
-     * For the native path the [AttachmentStore] is already initialised in [currentSessionDebugDir]
+     * For the native path the [AttachmentStore] is pre-initialised in [executeTaskInternal]
      * before [createBrain] is called, so the store is available to [AgentLoop]'s
      * tool-invocation wrapper via [activeAttachmentStore] without any extra setup here.
      *

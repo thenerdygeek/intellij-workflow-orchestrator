@@ -47,12 +47,15 @@ class NativeRouterSkipContractTest {
 
     @Test
     fun `SG shared-catalog warm-up is gated on non-anthropic provider`() {
-        // getOrCreateSharedCatalog must not be called unconditionally when llmProvider == "anthropic"
+        // getOrCreateSharedCatalog must be called ONLY when llmProvider != "anthropic".
+        // The proximity regex ties the guard to the warm-up call so that removing the
+        // guard (or changing != to ==) causes this test to fail.
         assertTrue(
-            Regex("""llmProvider\s*!=\s*"anthropic"""").containsMatchIn(src) ||
-                Regex("""llmProvider\s*==\s*"anthropic"""").containsMatchIn(src),
-            "SG catalog warm-up must be guarded by a llmProvider check so the anthropic path " +
-                "never dials Sourcegraph"
+            Regex("""llmProvider\s*!=\s*"anthropic"[^\n]*\n[^\n]*getOrCreateSharedCatalog""")
+                .containsMatchIn(src),
+            "SG catalog warm-up (getOrCreateSharedCatalog) must be guarded by " +
+                "llmProvider != \"anthropic\" on the preceding line so the native Anthropic " +
+                "path never dials Sourcegraph"
         )
     }
 
