@@ -223,7 +223,7 @@ Parallel fan-out (read-only agents like "explorer" only): pass up to 5 prompts (
             ),
             "model" to ParameterProperty(
                 type = "string",
-                description = "Optional model ID override for this subagent (e.g. 'anthropic::2024-10-22::claude-3-5-sonnet-latest'). Overrides the agent config's model and the default auto-selected model. Use when a specific model capability is required."
+                description = "Optional model ID override for this subagent. For the Sourcegraph provider use the full ref form (e.g. 'anthropic::2024-10-22::claude-3-5-sonnet-latest'); for the native Anthropic provider use a bare model ID (e.g. 'claude-sonnet-4-6'). Overrides the agent config's model and the default auto-selected model. Use when a specific model capability is required."
             ),
         ),
         required = listOf("description", "prompt")
@@ -700,7 +700,17 @@ Parallel fan-out (read-only agents like "explorer" only): pass up to 5 prompts (
 
         // Effective model: explicit param > YAML frontmatter > Sonnet non-thinking (sub-agent default tier)
         // > orchestrator's auto-selected model (when no Sonnet is available on the instance).
-        val subagentDefaultModel = ModelCache.pickSonnetNonThinking(ModelCache.getCached())?.id
+        // C2: native Anthropic path uses a bare model id from AnthropicModelCatalog; the Sourcegraph
+        // path resolves via ModelCache which returns a full "provider::version::id" ref that 400s on
+        // api.anthropic.com.
+        val subagentDefaultModel = if (
+            com.workflow.orchestrator.agent.settings.AgentSettings.getInstance(project)
+                .state.llmProvider == "anthropic"
+        ) {
+            com.workflow.orchestrator.core.ai.AnthropicModelCatalog.defaultSubagentModel()
+        } else {
+            ModelCache.pickSonnetNonThinking(ModelCache.getCached())?.id
+        }
         val effectiveModelOverride = modelOverride ?: config.modelId ?: subagentDefaultModel
 
         return if (promptPairs.size == 1) {

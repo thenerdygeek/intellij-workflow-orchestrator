@@ -2067,7 +2067,13 @@ class AgentService(
                 // (fresh OkHttp pool on dead-socket) is unaffected — it preserves the model.
                 val fallbackResolution = com.workflow.orchestrator.agent.loop.NetworkRecoveryPolicy
                     .resolveFallbackChain(strategy) {
-                        ModelCache.buildFallbackChain(ModelCache.getCached())
+                        // I2: native Anthropic path supplies bare model ids from the static catalog;
+                        // Sourcegraph path resolves via ModelCache (full provider::version::id refs).
+                        if (agentSettings.state.llmProvider == "anthropic") {
+                            com.workflow.orchestrator.core.ai.AnthropicModelCatalog.fallbackChain()
+                        } else {
+                            ModelCache.buildFallbackChain(ModelCache.getCached())
+                        }
                     }
                 when (fallbackResolution.reason) {
                     com.workflow.orchestrator.agent.loop.NetworkRecoveryPolicy
@@ -2296,7 +2302,20 @@ class AgentService(
                         researchIndexPath = researchDirPath.toString(),
                         ideContext = ideContext,
                         availableShells = allowedShells,
-                        availableModels = formatModelsForPrompt(ModelCache.getCached()),
+                        // I4: native Anthropic path sources the model list from the static catalog
+                        // (ModelCache is Sourcegraph-only and returns stale/empty on api.anthropic.com).
+                        availableModels = if (agentSettings.state.llmProvider == "anthropic") {
+                            com.workflow.orchestrator.core.ai.AnthropicModelCatalog.MODELS.map { e ->
+                                val tags = mutableListOf<String>()
+                                if (e.id.lowercase().contains("opus")) tags.add("most capable")
+                                if (e.id.lowercase().contains("sonnet")) tags.add("balanced")
+                                if (e.id.lowercase().contains("haiku")) tags.add("fastest, cheapest")
+                                val tagStr = if (tags.isNotEmpty()) " — ${tags.joinToString(", ")}" else ""
+                                "- `${e.id}`$tagStr"
+                            }
+                        } else {
+                            formatModelsForPrompt(ModelCache.getCached())
+                        },
                         hasWebTools = hasWebTools,
                         integrations = integrations,
                         // One-shot — fires once per drift detection, then resets.
@@ -2744,8 +2763,15 @@ class AgentService(
                     currentUserMessageTsProvider = { userMessageTs },
                     streamingEditCallback = streamingEditCallback,
                     networkProbe = com.workflow.orchestrator.core.network.NetworkStateService.getInstanceOrNull(),
-                    llmProbeUrl = com.workflow.orchestrator.core.settings.ConnectionSettings.getInstance()
-                        .state.sourcegraphUrl.trimEnd('/').ifBlank { null },
+                    // I1: probe the correct host for the active provider so the OFFLINE fail-fast
+                    // path dials api.anthropic.com on native rather than the Sourcegraph tunnel.
+                    llmProbeUrl = if (agentSettings.state.llmProvider == "anthropic") {
+                        com.workflow.orchestrator.core.settings.ConnectionSettings.getInstance()
+                            .state.anthropicApiUrl.trimEnd('/').ifBlank { null }
+                    } else {
+                        com.workflow.orchestrator.core.settings.ConnectionSettings.getInstance()
+                            .state.sourcegraphUrl.trimEnd('/').ifBlank { null }
+                    },
                 )
 
                 // D1: Set activeTask + activeMessageStateHandler atomically under Mutex.
@@ -3294,7 +3320,20 @@ class AgentService(
                 planModeEnabled = isPlanModeActive(),
                 ideContext = ideContext,
                 availableShells = allowedShells,
-                availableModels = formatModelsForPrompt(ModelCache.getCached()),
+                // I4 (resume path): native Anthropic path sources from static catalog so the
+                // model list is accurate even before ModelCache warms up on api.anthropic.com.
+                availableModels = if (AgentSettings.getInstance(project).state.llmProvider == "anthropic") {
+                    com.workflow.orchestrator.core.ai.AnthropicModelCatalog.MODELS.map { e ->
+                        val tags = mutableListOf<String>()
+                        if (e.id.lowercase().contains("opus")) tags.add("most capable")
+                        if (e.id.lowercase().contains("sonnet")) tags.add("balanced")
+                        if (e.id.lowercase().contains("haiku")) tags.add("fastest, cheapest")
+                        val tagStr = if (tags.isNotEmpty()) " — ${tags.joinToString(", ")}" else ""
+                        "- `${e.id}`$tagStr"
+                    }
+                } else {
+                    formatModelsForPrompt(ModelCache.getCached())
+                },
                 hasWebTools = registry.has("web_fetch") || registry.has("web_search"),
                 integrations = IntegrationFlags.from(ConnectionSettings.getInstance().state),
                 researchIndex = resumeResearchIndex,
