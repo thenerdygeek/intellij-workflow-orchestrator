@@ -140,6 +140,7 @@ class AnthropicHttpClientTest {
             assertIs<ApiResult.Success<Unit>>(result)
             assertTrue(lines.any { it.startsWith("event:") }, "event lines must reach onLine")
             assertTrue(lines.any { it.startsWith("data:") }, "data lines must reach onLine")
+            assertTrue(lines.any { it.isEmpty() }, "blank SSE separator lines must reach onLine")
         } finally {
             server.shutdown()
         }

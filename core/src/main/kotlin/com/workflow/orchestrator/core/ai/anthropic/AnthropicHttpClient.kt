@@ -7,6 +7,7 @@ import com.workflow.orchestrator.core.http.IdeTrust
 import com.workflow.orchestrator.core.model.ApiResult
 import com.workflow.orchestrator.core.model.ErrorType
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import okhttp3.MediaType.Companion.toMediaType
@@ -18,6 +19,7 @@ import java.io.IOException
 import java.net.SocketTimeoutException
 import java.time.Duration
 import java.util.concurrent.atomic.AtomicInteger
+import kotlin.coroutines.coroutineContext
 
 /**
  * Proxy-aware OkHttp transport for the Anthropic Messages API streaming endpoint.
@@ -95,8 +97,14 @@ class AnthropicHttpClient(
             .post(bodyJson.toRequestBody(JSON_MEDIA_TYPE))
             .build()
 
+        val call = client.newCall(httpRequest)
+        // Propagate coroutine cancellation to OkHttp so the brain's interruptStream()/
+        // cancelActiveRequest() (which cancel the coroutine) abort the in-flight call
+        // instead of blocking up to readTimeout.
+        coroutineContext[Job]?.invokeOnCompletion { cause -> if (cause != null) call.cancel() }
+
         try {
-            client.newCall(httpRequest).execute().use { response ->
+            call.execute().use { response ->
                 val statusCode = response.code
                 val responseBody = response.body
 
