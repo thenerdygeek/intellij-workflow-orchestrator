@@ -79,9 +79,8 @@ class AnthropicNativeProtocol : NativeProtocol {
      * Returns null for status codes that don't require special handling (the loop's existing
      * retry machinery handles generic 5xx / network errors).
      *
-     * Note: this method is NOT on [NativeProtocol]; it lives here as a pure helper so the
-     * forthcoming [AnthropicDirectProvider] (Task 11) can delegate its
-     * [com.workflow.orchestrator.core.ai.LlmProvider.classifyHttpError] override here rather
+     * Note: this method is NOT on [NativeProtocol]; it lives here as a pure helper so
+     * [AnthropicHttpClient] (Task 8) can delegate its HTTP-error enrichment here rather
      * than duplicating the mapping.
      */
     fun classifyHttpError(statusCode: Int, @Suppress("UNUSED_PARAMETER") body: String): String? =
