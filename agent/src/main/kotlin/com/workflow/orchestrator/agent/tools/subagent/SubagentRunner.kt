@@ -157,10 +157,17 @@ class SubagentRunner(
      * the fallback chain to vision-capable models. Mirrors main agent's `modelCatalogService`.
      */
     private val modelCatalogService: com.workflow.orchestrator.core.ai.ModelCatalogService? = null,
+    /**
+     * Phase 4a Task 11 (C1) — the sub-agent's tool-calling paradigm. Defaults to [XmlToolProtocol]
+     * so every existing (non-Phase-4a) caller compiles unchanged. [SpawnAgentTool] passes the
+     * provider-selected protocol so a sub-agent on the native Anthropic brain presents tools the same
+     * way the orchestrator does: `presentTools` returns null and the §6c XML tool-doc block is OMITTED
+     * (tools live only in the wire `tools:[]` field) — preventing the double-presentation dialect drift.
+     */
+    private val toolProtocol: com.workflow.orchestrator.core.ai.protocol.ToolProtocol =
+        com.workflow.orchestrator.core.ai.protocol.XmlToolProtocol(),
 ) {
     private val abortRequested = AtomicBoolean(false)
-    private val toolProtocol: com.workflow.orchestrator.core.ai.protocol.ToolProtocol =
-        com.workflow.orchestrator.core.ai.protocol.XmlToolProtocol()
 
     /**
      * Job of the child [coroutineScope] that wraps the sub-agent's inner [AgentLoop.run]

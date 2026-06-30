@@ -51,6 +51,15 @@ class SpawnAgentTool(
     var maxOutputTokens: Int? = null,
     var sessionDebugDir: java.io.File? = null,
     var toolExecutionMode: String = "accumulate",
+    /**
+     * Phase 4a Task 11 (C1) — the provider-selected tool-calling protocol, pushed per task by
+     * [com.workflow.orchestrator.agent.AgentService] and forwarded to every [SubagentRunner].
+     * Defaults to [com.workflow.orchestrator.core.ai.protocol.XmlToolProtocol] so all existing callers
+     * (and the bare-mock-Project spawn tests) construct unchanged — SpawnAgentTool deliberately does
+     * NOT read the PROJECT-scoped AgentSettings on its hot path; AgentService owns the provider lookup.
+     */
+    var toolProtocol: com.workflow.orchestrator.core.ai.protocol.ToolProtocol =
+        com.workflow.orchestrator.core.ai.protocol.XmlToolProtocol(),
     var onSubagentProgress: (suspend (String, SubagentProgressUpdate) -> Unit)? = null,
     /**
      * Parent-session approval gate. Forwarded to every [SubagentRunner] so write tools
@@ -861,6 +870,7 @@ Parallel fan-out (read-only agents like "explorer" only): pass up to 5 prompts (
             cachedFallbackChain = cachedFallbackChain(),
             onModelSwitch = onModelSwitch,
             modelCatalogService = modelCatalogService(),
+            toolProtocol = toolProtocol,
         )
         val uiLabel = "$description (${config.name})"
         runningAgents[agentId] = runner
@@ -981,6 +991,7 @@ Parallel fan-out (read-only agents like "explorer" only): pass up to 5 prompts (
                         cachedFallbackChain = cachedFallbackChain(),
                         onModelSwitch = onModelSwitch,
                         modelCatalogService = modelCatalogService(),
+                        toolProtocol = toolProtocol,
                     )
                     val perChildDesc = promptPairs[idx].second
                     val childLabel = "${perChildDesc} #${idx + 1} (${config.name})"

@@ -879,9 +879,28 @@ class AgentService(
         )
     }
 
-    /** The active tool-calling protocol for this service. Tier-1 = XML (Sourcegraph). Phase 4 selects per provider. */
-    private val toolProtocol: com.workflow.orchestrator.core.ai.protocol.ToolProtocol =
-        com.workflow.orchestrator.core.ai.protocol.XmlToolProtocol()
+    /**
+     * Phase 4a Task 11 (C1) — resolves the tool-calling protocol for the CURRENT provider, PER TASK.
+     *
+     * Native Anthropic → [com.workflow.orchestrator.core.ai.protocol.AnthropicNativeProtocol]
+     * (`presentTools` returns null; tools live ONLY in the wire `tools:[]` field, never also in the
+     * system prompt — this is what kills the historical double-presentation "dialect drift", which the
+     * dialect guard would then reject). Everything else (Sourcegraph) →
+     * [com.workflow.orchestrator.core.ai.protocol.XmlToolProtocol].
+     *
+     * Resolved fresh per task (replaces the old single construction-time `val`, which went stale when
+     * the user switched provider mid-session) so a mid-session provider switch is honored. The resolved
+     * instance is threaded to EVERY prompt-build + dialect-guard site: orchestrator system-prompt tool
+     * injection, the loop + XmlLlmProvider facade, the resume dialect-redaction, the live/resume
+     * MessageStateHandler chokepoint, and (via [com.workflow.orchestrator.agent.tools.builtin.SpawnAgentTool])
+     * every sub-agent — which runs the native brain too.
+     */
+    private fun resolveActiveToolProtocol(): com.workflow.orchestrator.core.ai.protocol.ToolProtocol =
+        if (AgentSettings.getInstance(project).state.llmProvider == "anthropic") {
+            com.workflow.orchestrator.core.ai.protocol.AnthropicNativeProtocol()
+        } else {
+            com.workflow.orchestrator.core.ai.protocol.XmlToolProtocol()
+        }
 
     private fun getOrCreateSharedCatalog(
         sgUrl: String,
@@ -1206,6 +1225,10 @@ class AgentService(
                     baseDir = agentBaseDir,
                     sessionId = "$parentId/subagents/$agentId",
                     taskText = "sub-agent $agentId",
+                    // Sub-agents run the native brain too; their dialect chokepoint
+                    // (consumeDialectDriftFlag) must short-circuit under native. Resolved per spawn
+                    // so a mid-session provider switch is honored.
+                    toolProtocol = resolveActiveToolProtocol(),
                 )
             },
         ) }
@@ -1953,6 +1976,12 @@ class AgentService(
                 } else {
                     null
                 }
+                // Phase 4a Task 11 (C1) — the per-task tool-calling protocol. Native →
+                // AnthropicNativeProtocol (presentTools=null; tools only on the wire); else XML.
+                // Threaded below to the orchestrator prompt injection, the loop + XmlLlmProvider
+                // facade, the live MessageStateHandler chokepoint, and every sub-agent (pushed onto
+                // the spawn tool's toolProtocol field).
+                val activeToolProtocol = resolveActiveToolProtocol()
                 // Phase 7 followup F-P6-3 — recency guard for the analyzedImageBadge
                 // flag. `indexOfLast { it.say == UiSay.TEXT }` alone has no recency
                 // floor: if the badge fires AFTER `BrainRouter` step-2 completes but
@@ -2325,7 +2354,7 @@ class AgentService(
                         // presentTools() returns String? (null only under native; XML is always non-null). Keep `markdown`
                         // NON-NULL so the existing `markdown.length` usages at :2215 compile unchanged (the `?: ""` is dead
                         // for XML — never taken — but preserves the non-null type without behavior change).
-                        val markdown = toolProtocol.presentTools(defs) ?: ""
+                        val markdown = activeToolProtocol.presentTools(defs) ?: ""
                         val fullPrompt = systemPromptBuilder(markdown)
                         // RANK-1 MEASUREMENT (perf/token-context-optimization): size the
                         // first-message baseline so prompt-trim work targets real numbers.
@@ -2362,6 +2391,9 @@ class AgentService(
                     // active model via the catalog; falls back to the same
                     // FALLBACK_MAX_INPUT_TOKENS the orchestrator uses on cold cache.
                     spawnAgentTool.contextBudget = ctx.effectiveMaxInputTokens()
+                    // Phase 4a Task 11 (C1) — push the per-task protocol so every SubagentRunner
+                    // presents tools the same way the orchestrator does (native → presentTools=null).
+                    spawnAgentTool.toolProtocol = activeToolProtocol
                     spawnAgentTool.maxOutputTokens = agentSettings.state.maxOutputTokens
                     // Gated: null when api-debug dumps are off, so sub-agents write nothing to disk.
                     spawnAgentTool.sessionDebugDir = apiDebugDir
@@ -2422,7 +2454,9 @@ class AgentService(
                     val handler = MessageStateHandler(
                         baseDir = sessionBaseDir,
                         sessionId = sid,
-                        taskText = resolvedTaskText
+                        taskText = resolvedTaskText,
+                        // Native (requiresDialectGuard=false) → the dialect chokepoint short-circuits.
+                        toolProtocol = activeToolProtocol,
                     )
 
                     // Restore existing messages for follow-up turns (multi-turn session continuity)
@@ -2563,7 +2597,7 @@ class AgentService(
                 val xmlProvider = com.workflow.orchestrator.agent.loop.XmlLlmProvider(
                     delegate = brain,
                     catalogService = sharedCatalogHolder.peek(),
-                    toolProtocol = toolProtocol,
+                    toolProtocol = activeToolProtocol,
                 )
 
                 val loop = AgentLoop(
@@ -2572,7 +2606,7 @@ class AgentService(
                     toolDefinitions = toolDefs,
                     contextManager = ctx,
                     project = project,
-                    toolProtocol = toolProtocol,
+                    toolProtocol = activeToolProtocol,
                     onStreamChunk = onStreamChunk,
                     onToolCall = onToolCall,
                     planMode = isPlanModeActive(),
@@ -2940,6 +2974,9 @@ class AgentService(
             log.warn("AgentService.resumeSession: session dir not found for $sessionId")
             return null
         }
+        // Phase 4a Task 11 (C1) — per-task protocol for the resume path. Gates the dialect-redaction
+        // walk below (native skips it) and the restored MessageStateHandler's dialect chokepoint.
+        val activeToolProtocol = resolveActiveToolProtocol()
 
         // Acquire session lock — prevents double-resume across IDE instances
         val lock = SessionLock.tryAcquire(sessionDir)
@@ -3017,7 +3054,7 @@ class AgentService(
         // Site 6 gate: under native (requiresDialectGuard=false) skip the redaction walk entirely
         // and use the no-op emptyRedaction() so redactedCount==0 and the assignment below is never
         // taken. Under XML (requiresDialectGuard=true) the call is identical to pre-gate behavior.
-        val dialectRedaction = if (toolProtocol.requiresDialectGuard) {
+        val dialectRedaction = if (activeToolProtocol.requiresDialectGuard) {
             ResumeHelper.redactDialectDriftInHistory(activeApiHistory)
         } else {
             ResumeHelper.emptyRedaction()
@@ -3145,7 +3182,13 @@ class AgentService(
 
         // Create MessageStateHandler with restored state (init-only, before concurrent access)
         val taskText = savedUiMessages.firstOrNull()?.text ?: "Resumed session"
-        val handler = MessageStateHandler(baseDir = sessionBaseDir, sessionId = sessionId, taskText = taskText)
+        val handler = MessageStateHandler(
+            baseDir = sessionBaseDir,
+            sessionId = sessionId,
+            taskText = taskText,
+            // Native (requiresDialectGuard=false) → the dialect chokepoint short-circuits.
+            toolProtocol = activeToolProtocol,
+        )
         handler.setClineMessages(savedUiMessages)
         handler.setApiConversationHistory(activeApiHistory)
 
