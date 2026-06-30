@@ -35,21 +35,33 @@ class ProviderBranchWiringTest {
      * "claude-sonnet-4-6"), not from [ModelCache.pickSonnetNonThinking] which produces a
      * Sourcegraph-formatted ref that 400s on api.anthropic.com.
      *
+     * Commit 732fd3d59 moved the call OUT of SpawnAgentTool (to avoid a mock-Project trap in
+     * SpawnAgentToolTest) INTO AgentService, which now pushes the resolved bare model id via
+     * [spawnAgentTool.nativeSubagentDefaultModel]. Assertions are updated accordingly:
+     *  - [AgentService] contains the catalog call guarded by the llmProvider check.
+     *  - [SpawnAgentTool] references the pushed field [nativeSubagentDefaultModel].
+     *
      * Proximity regex: the llmProvider guard must appear within 300 chars of the catalog call
-     * inside the same if-branch so removing the guard causes this assertion to fail.
+     * in AgentService so removing the guard causes this assertion to fail.
      */
     @Test
     fun `subagent default model uses anthropic catalog on native`() {
+        // The catalog call now lives in AgentService (pushed to SpawnAgentTool via nativeSubagentDefaultModel).
         assertTrue(
-            spawn.contains("AnthropicModelCatalog.defaultSubagentModel()"),
-            "SpawnAgentTool must call AnthropicModelCatalog.defaultSubagentModel() for the native Anthropic path"
+            agent.contains("AnthropicModelCatalog.defaultSubagentModel()"),
+            "AgentService must call AnthropicModelCatalog.defaultSubagentModel() for the native Anthropic path"
         )
-        // Site-specific proximity: guard and catalog call are co-located (not split across the file).
+        // Site-specific proximity in AgentService: guard and catalog call are co-located.
         assertTrue(
             Regex("""llmProvider\s*==\s*"anthropic"[\s\S]{0,300}AnthropicModelCatalog\.defaultSubagentModel\(\)""")
-                .containsMatchIn(spawn),
+                .containsMatchIn(agent),
             "AnthropicModelCatalog.defaultSubagentModel() must be guarded by " +
-                "llmProvider == \"anthropic\" within 300 chars — they cannot appear in disjoint locations"
+                "llmProvider == \"anthropic\" within 300 chars in AgentService — they cannot appear in disjoint locations"
+        )
+        // SpawnAgentTool must reference the field pushed by AgentService (not call the catalog directly).
+        assertTrue(
+            spawn.contains("nativeSubagentDefaultModel"),
+            "SpawnAgentTool must reference nativeSubagentDefaultModel (the field pushed by AgentService)"
         )
     }
 

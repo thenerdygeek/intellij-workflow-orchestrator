@@ -16,7 +16,9 @@ class CompanyBWorkflowConfig : WorkflowConfig {
             ServiceType.BITBUCKET -> state.bitbucketUrl
             ServiceType.SONARQUBE -> state.sonarUrl
             ServiceType.SOURCEGRAPH -> state.sourcegraphUrl
+            // WEB_SEARCH stores a provider-agnostic API key with no canonical base URL.
             ServiceType.WEB_SEARCH -> ""
+            ServiceType.ANTHROPIC -> state.anthropicApiUrl
         }
     }
 }

@@ -70,9 +70,12 @@ class AgentServiceModelChangeCasTest {
         val buildIdx = src.indexOf("SystemPrompt.build(", snapshotIdx)
         assertTrue(buildIdx > snapshotIdx && buildIdx < snapshotIdx + 300,
             "SystemPrompt.build() must appear within 300 chars after dialectDriftSnapshot")
-        // The parameter must use the snapshot local, not the flag directly
+        // The parameter must use the snapshot local, not the flag directly.
+        // Window widened from 2000→3500: Task 11 added parameters between SystemPrompt.build(
+        // and dialectDriftDetected (availableModels, integrationFlags, etc.), pushing the
+        // distance to ~2812 chars. The snapshot-before-build LOGIC is unchanged and correct.
         val driftParamIdx = src.indexOf("dialectDriftDetected = dialectDriftSnapshot", buildIdx)
-        assertTrue(driftParamIdx > buildIdx && driftParamIdx < buildIdx + 2000,
+        assertTrue(driftParamIdx > buildIdx && driftParamIdx < buildIdx + 3500,
             "dialectDriftDetected parameter must be set to dialectDriftSnapshot (the local), not consumeDialectDriftFlag()")
         // Also verify: consumeDialectDriftFlag() appears BEFORE the snapshot, not AFTER it inside build()
         // (i.e., the pattern is: val snapshot = consume(); build(x = snapshot) — not build(x = consume()))
