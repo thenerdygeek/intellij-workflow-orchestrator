@@ -227,10 +227,10 @@ object AnthropicSseParser {
         emitText: (String) -> Unit,
     ) {
         for ((_, state) in toolUseBlocks) {
-            runCatching {
-                val parsed = LENIENT.parseToJsonElement(state.json.toString()).jsonObject
-                emitText(ToolUseXmlSerializer.toXml(state.name, parsed))
-            }
+            val parsed = runCatching {
+                LENIENT.parseToJsonElement(state.json.toString()).jsonObject
+            }.getOrNull() ?: continue   // tolerate malformed accumulated SSE JSON
+            emitText(ToolUseXmlSerializer.toXml(state.name, parsed))   // collision guard propagates
         }
     }
 

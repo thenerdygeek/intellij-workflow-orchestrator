@@ -1,6 +1,7 @@
 package com.workflow.orchestrator.core.ai.anthropic
 
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -67,6 +68,26 @@ class AnthropicSseParserTest {
     }
 
     @Test
+    fun `thinking_delta with two frames produces one contiguous span`() {
+        val (out, _) = parse(
+            """
+            event: content_block_start
+            data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}
+            event: content_block_delta
+            data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"Let me "}}
+            event: content_block_delta
+            data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"reason"}}
+            event: content_block_stop
+            data: {"type":"content_block_stop","index":0}
+            event: message_stop
+            data: {"type":"message_stop"}
+            """,
+        )
+        assertTrue(out.contains("<thinking>Let me reason</thinking>"))
+        assertFalse(out.contains("</thinking><thinking>"))
+    }
+
+    @Test
     fun `event error sets errorClass`() {
         val (_, r) = parse(
             """
@@ -75,5 +96,6 @@ class AnthropicSseParserTest {
             """,
         )
         assertNotNull(r.errorClass)
+        assertEquals("overloaded_error", r.errorClass)
     }
 }
