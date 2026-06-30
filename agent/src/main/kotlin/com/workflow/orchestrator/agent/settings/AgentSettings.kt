@@ -12,6 +12,22 @@ class AgentSettings : SimplePersistentStateComponent<AgentSettings.State>(State(
 
     class State : BaseState() {
         var agentEnabled by property(false)
+
+        // ── LLM provider selection ────────────────────────────────────────────
+        /** Which LLM back-end to use: "sourcegraph" (default) or "anthropic". */
+        var llmProvider by string("sourcegraph")
+
+        /** Anthropic model id when [llmProvider] == "anthropic". */
+        var anthropicModel by string("claude-opus-4-8")
+
+        /**
+         * Anthropic extended-thinking budget level when [llmProvider] == "anthropic".
+         * Accepted values: low | medium | high | xhigh | max.
+         */
+        var anthropicEffort by string("high")
+
+        /** Enable extended thinking for Anthropic models that support it. */
+        var anthropicThinkingEnabled by property(true)
         /**
          * Model name in Sourcegraph format: provider::apiVersion::modelId
          * Auto-resolved from API on first use. User can override in settings.

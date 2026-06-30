@@ -192,6 +192,9 @@ class SetupDialog(private val project: Project) : DialogWrapper(project) {
                 ServiceType.WEB_SEARCH -> {
                     // WEB_SEARCH has no URL or credential in onboarding (configured via Settings)
                 }
+                ServiceType.ANTHROPIC -> {
+                    // Anthropic is not part of the onboarding wizard (configured via AI Agent settings)
+                }
             }
         }
         super.doOKAction()

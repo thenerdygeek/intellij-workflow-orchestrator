@@ -35,6 +35,10 @@ class ConnectionSettings : PersistentStateComponent<ConnectionSettings.State> {
         var lastJiraBoardName: String = "",
         var lastJiraBoardType: String = "",
 
+        // ── Anthropic direct provider ─────────────────────────────────────────
+        // Token lives in PasswordSafe under ServiceType.ANTHROPIC; URL here.
+        var anthropicApiUrl: String = "https://api.anthropic.com",
+
         // ── Web search provider connection settings ───────────────────────────
         // API keys live in PasswordSafe under ServiceType.WEB_SEARCH.
         var webSearchSearxngUrl: String = "",

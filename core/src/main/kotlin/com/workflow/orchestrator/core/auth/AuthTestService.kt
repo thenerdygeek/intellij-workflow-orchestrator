@@ -316,5 +316,8 @@ class AuthTestService {
         ServiceType.BITBUCKET -> "/rest/api/1.0/users"
         ServiceType.SOURCEGRAPH -> "/.api/client-config"
         ServiceType.WEB_SEARCH -> "/"
+        // Anthropic does not have a lightweight health endpoint reachable without a prompt;
+        // use the models list as a connectivity check.
+        ServiceType.ANTHROPIC -> "/v1/models"
     }
 }

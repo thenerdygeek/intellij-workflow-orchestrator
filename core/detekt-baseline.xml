@@ -1057,7 +1057,6 @@
     <ID>NoMultipleSpaces:WebPage.kt$SanitizerVerdict.STRIPPED$ </ID>
     <ID>NoMultipleSpaces:WebPage.kt$SanitizerVerdict.STRUCTURAL_ONLY$ </ID>
     <ID>NoMultipleSpaces:WireOutputScenarioTest.kt$WireOutputScenarioTest$ </ID>
-    <ID>NoSemicolons:ServiceType.kt$ServiceType.WEB_SEARCH$;</ID>
     <ID>NoUnusedImports:BitbucketApiClientTest.kt$com.workflow.orchestrator.core.bitbucket.BitbucketApiClientTest.kt</ID>
     <ID>NoUnusedImports:BitbucketBranchClientUrlEncodingTest.kt$com.workflow.orchestrator.core.bitbucket.BitbucketBranchClientUrlEncodingTest.kt</ID>
     <ID>NoUnusedImports:BuildEventCaptureServiceImpl.kt$com.workflow.orchestrator.core.services.impl.BuildEventCaptureServiceImpl.kt</ID>

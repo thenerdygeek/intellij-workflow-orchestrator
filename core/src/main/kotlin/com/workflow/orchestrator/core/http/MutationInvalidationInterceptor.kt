@@ -34,6 +34,7 @@ class MutationInvalidationInterceptor(private val service: ServiceType) : Interc
         ServiceType.SONARQUBE -> "sonar"
         ServiceType.SOURCEGRAPH -> "sourcegraph"
         ServiceType.WEB_SEARCH -> "web_search"
+        ServiceType.ANTHROPIC -> "anthropic"
     }
 
     override fun intercept(chain: Interceptor.Chain): Response {

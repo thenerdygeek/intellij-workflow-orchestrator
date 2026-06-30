@@ -6,5 +6,6 @@ enum class ServiceType(val displayName: String) {
     BITBUCKET("Bitbucket"),
     SONARQUBE("SonarQube"),
     SOURCEGRAPH("Sourcegraph"),
-    WEB_SEARCH("WebSearch");
+    WEB_SEARCH("WebSearch"),
+    ANTHROPIC("Anthropic")
 }
