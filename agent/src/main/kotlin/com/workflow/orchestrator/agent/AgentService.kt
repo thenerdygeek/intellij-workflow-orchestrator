@@ -691,6 +691,14 @@ class AgentService(
     @Volatile private var activeAttachmentStore:
         com.workflow.orchestrator.agent.session.AttachmentStore? = null
 
+    /**
+     * Raw session directory for the currently-active session (e.g. `sessions/{sid}`).
+     * Set before [createBrain] is called so [BrainFactory] can derive the `api-debug/`
+     * sub-directory for [AnthropicHttpClient] debug dumps. Cleared in [resetForNewChat]
+     * and in the `executeTask` finally block alongside [activeAttachmentStore].
+     */
+    @Volatile private var currentSessionDebugDir: java.io.File? = null
+
     /** Model ID of the currently active parent brain. Subagents inherit this as their default model. */
     @Volatile private var currentBrainModelId: String? = null
 
@@ -784,6 +792,15 @@ class AgentService(
         project = project,
         toolNames = { registry.allToolNames() },
         paramNames = { com.workflow.orchestrator.agent.tools.background.BackgroundEligibility.withReservedParams(registry.allParamNames()) },
+        // Thread the active session's AttachmentStore into BrainFactory so AnthropicDirectBrain
+        // can resolve image bytes. AgentService initialises activeAttachmentStore before calling
+        // createBrain() for the native path, so this lambda returns non-null in production.
+        attachmentAccess = {
+            activeAttachmentStore?.let { com.workflow.orchestrator.agent.tool.SessionAttachmentAccess(it) }
+        },
+        // Thread the raw session dir so BrainFactory can derive the api-debug/ sub-directory
+        // for AnthropicHttpClient debug dumps when writeApiDebugDumps is enabled.
+        sessionDebugDir = { currentSessionDebugDir },
     )
 
     /**
@@ -972,6 +989,47 @@ class AgentService(
             imageEnabledProvider = {
                 com.workflow.orchestrator.core.settings.PluginSettings.getInstance(project).state.enableImageInput
             },
+        )
+    }
+
+    /**
+     * Provider-aware wrapper: returns [brain] unchanged for the native Anthropic path
+     * (no [BrainRouter] needed — [AnthropicDirectBrain] handles image hydration natively);
+     * delegates to [wrapBrainWithRouter] for the Sourcegraph path.
+     *
+     * For the native path the [AttachmentStore] is already initialised in [currentSessionDebugDir]
+     * before [createBrain] is called, so the store is available to [AgentLoop]'s
+     * tool-invocation wrapper via [activeAttachmentStore] without any extra setup here.
+     *
+     * Both call sites (initial brain + recycle/fallback brain) must use this function so the
+     * routing decision is enforced consistently.
+     */
+    private fun wrapBrainOrSkip(
+        brain: LlmBrain,
+        sessionDir: java.nio.file.Path,
+        sgUrl: String,
+        tokenProvider: () -> String?,
+        onBadgeFire: () -> Unit,
+        catalog: com.workflow.orchestrator.core.ai.ModelCatalogService?,
+    ): LlmBrain {
+        if (AgentSettings.getInstance(project).state.llmProvider == "anthropic") {
+            // Native provider: AnthropicDirectBrain handles images itself. Ensure the
+            // AttachmentStore is initialised (it was set before createBrain(); this guard
+            // is a belt-and-suspenders to cover recycle/fallback calls).
+            if (activeAttachmentStore == null) {
+                activeAttachmentStore =
+                    com.workflow.orchestrator.agent.session.AttachmentStore(sessionDir)
+            }
+            return brain
+        }
+        // Sourcegraph path: wrap in BrainRouter for hybrid text/image routing.
+        return wrapBrainWithRouter(
+            brain = brain,
+            sessionDir = sessionDir,
+            sgUrl = sgUrl,
+            tokenProvider = tokenProvider,
+            onBadgeFire = onBadgeFire,
+            catalog = catalog ?: error("ModelCatalogService required for Sourcegraph BrainRouter"),
         )
     }
 
@@ -1854,9 +1912,9 @@ class AgentService(
                     }
                 }
 
-                // I3: Create a fresh brain each time to pick up settings changes
-                val rawBrain = createBrain()
-                // Wire API debug dumps — save request/response JSON per session
+                // Compute session dir BEFORE createBrain so BrainFactory can thread
+                // the session path (and therefore the api-debug/ sub-dir + AttachmentStore)
+                // into AnthropicDirectBrain for the native Anthropic provider path.
                 val basePath = project.basePath ?: System.getProperty("user.home")
                 // Multimodal-agent Phase 6 — wrap in BrainRouter for hybrid routing
                 // (text-only / image-only / image+tools two-step). The wrapped brain
@@ -1867,15 +1925,32 @@ class AgentService(
                     "sessions/$sid"
                 ).toPath()
                 java.nio.file.Files.createDirectories(sessionDirPath)
+                // Expose the session dir to BrainFactory via the threadable field so
+                // AnthropicHttpClient can derive its api-debug/ sub-directory.
+                currentSessionDebugDir = sessionDirPath.toFile()
+                // Pre-initialise AttachmentStore for the native Anthropic path. For the
+                // Sourcegraph path wrapBrainOrSkip initialises it inside wrapBrainWithRouter,
+                // so this is a no-op there (the ?: guard in wrapBrainWithRouter takes over).
+                if (activeAttachmentStore == null) {
+                    activeAttachmentStore =
+                        com.workflow.orchestrator.agent.session.AttachmentStore(sessionDirPath)
+                }
+                // I3: Create a fresh brain each time to pick up settings changes.
+                val rawBrain = createBrain()
                 val sgUrlForRouter = ConnectionSettings.getInstance().state.sourcegraphUrl.trimEnd('/')
                 val routerCredentialStore = CredentialStore()
                 val tokenProviderForRouter: () -> String? =
                     { routerCredentialStore.getToken(ServiceType.SOURCEGRAPH) }
-                // Phase 6 review followup — single shared catalog, warmed up at
-                // construction so AgentLoop's vision-aware fallback (Task 6.3a)
-                // sees authoritative supportsVision values on the first
-                // image-bearing fallback, not always-false from cold cache.
-                val sharedCatalog = getOrCreateSharedCatalog(sgUrlForRouter, tokenProviderForRouter)
+                // Phase 6 review followup — single shared catalog, warmed up at construction so
+                // AgentLoop's vision-aware fallback (Task 6.3a) sees authoritative supportsVision
+                // values on the first image-bearing fallback, not always-false from cold cache.
+                // Task 10: guarded on llmProvider != "anthropic" so the native Anthropic path
+                // never dials Sourcegraph during brain construction.
+                val sharedCatalog = if (AgentSettings.getInstance(project).state.llmProvider != "anthropic") {
+                    getOrCreateSharedCatalog(sgUrlForRouter, tokenProviderForRouter)
+                } else {
+                    null
+                }
                 // Phase 7 followup F-P6-3 — recency guard for the analyzedImageBadge
                 // flag. `indexOfLast { it.say == UiSay.TEXT }` alone has no recency
                 // floor: if the badge fires AFTER `BrainRouter` step-2 completes but
@@ -1901,7 +1976,7 @@ class AgentService(
                         }
                     }
                 }
-                val brain = wrapBrainWithRouter(
+                val brain = wrapBrainOrSkip(
                     brain = rawBrain,
                     sessionDir = sessionDirPath,
                     sgUrl = sgUrlForRouter,
@@ -1912,10 +1987,8 @@ class AgentService(
                 brainRef = brain
                 currentBrainModelId = brain.modelId
                 log.info("[Agent] Task started: sessionId=$sid, model=${brain.modelId}")
-                val sessionDebugDir = java.io.File(
-                    ProjectIdentifier.agentDir(basePath),
-                    "sessions/$sid"
-                )
+                // Reuse the already-computed session dir (moved above createBrain for Task 10).
+                val sessionDebugDir = sessionDirPath.toFile()
                 // Output spiller: writes large tool outputs to disk, returns preview to LLM.
                 // Assigned to the session-scoped field so AgentTool.spillOrFormat() can resolve
                 // it via project.service<AgentService>().outputSpiller without coupling tools to
@@ -1997,19 +2070,26 @@ class AgentService(
                 val fbCredentialStore = CredentialStore()
                 val fbTokenProvider = { fbCredentialStore.getToken(ServiceType.SOURCEGRAPH) }
                 val brainFactory: suspend (String, String?) -> LlmBrain = { modelId: String, reason: String? ->
-                    val currentToolNames = registry.allToolNames()
-                    val currentParamNames = com.workflow.orchestrator.agent.tools.background.BackgroundEligibility.withReservedParams(registry.allParamNames())
-                    val newBrain = OpenAiCompatBrain(
-                        sourcegraphUrl = fbUrl,
-                        tokenProvider = fbTokenProvider,
-                        model = modelId,
-                        toolNameSet = currentToolNames,
-                        paramNameSet = currentParamNames
-                    ).also { b ->
-                        b.setApiDebugDir(apiDebugDir)
-                        // Inherit the shared API call counter so call-NNN-*.txt filenames
-                        // stay monotonic across the new brain's calls.
-                        b.setSharedApiCallCounter(sharedApiCounter)
+                    // Task 10: native Anthropic path delegates to BrainFactory.create(modelId)
+                    // so AnthropicDirectBrain is constructed with the same provider settings as
+                    // the initial brain (attachmentAccess + sessionDebugDir already threaded in).
+                    val newBrain = if (AgentSettings.getInstance(project).state.llmProvider == "anthropic") {
+                        createBrain(modelId)
+                    } else {
+                        val currentToolNames = registry.allToolNames()
+                        val currentParamNames = com.workflow.orchestrator.agent.tools.background.BackgroundEligibility.withReservedParams(registry.allParamNames())
+                        OpenAiCompatBrain(
+                            sourcegraphUrl = fbUrl,
+                            tokenProvider = fbTokenProvider,
+                            model = modelId,
+                            toolNameSet = currentToolNames,
+                            paramNameSet = currentParamNames
+                        ).also { b ->
+                            b.setApiDebugDir(apiDebugDir)
+                            // Inherit the shared API call counter so call-NNN-*.txt filenames
+                            // stay monotonic across the new brain's calls.
+                            b.setSharedApiCallCounter(sharedApiCounter)
+                        }
                     }
                     // Track the currently-live brain so the finally block at task end clears
                     // the api-debug dir on the right instance (a recycled brain, not a stale
@@ -2059,7 +2139,9 @@ class AgentService(
                     // (no cross-session leakage). Shared catalog ensures the
                     // recycled brain reads the SAME warmed-up vision-capability data
                     // (no per-recycle cold-fetch cost).
-                    wrapBrainWithRouter(
+                    // Task 10: wrapBrainOrSkip returns the brain unchanged for the native
+                    // Anthropic path (no BrainRouter needed; AttachmentStore already live).
+                    wrapBrainOrSkip(
                         brain = newBrain,
                         sessionDir = sessionDirPath,
                         sgUrl = fbUrl,
@@ -2772,6 +2854,9 @@ class AgentService(
                 // Clear attachment store for the same reason — stale store would add
                 // image attachments to a directory that belongs to the dead session.
                 activeAttachmentStore = null
+                // Clear session debug dir so BrainFactory doesn't derive api-debug/ paths
+                // pointing at a dead session on the next brain construction.
+                currentSessionDebugDir = null
                 // Clear per-task sub-agent callbacks. Leaving any of these attached
                 // would allow a stale reference to the previous session's AgentController
                 // / loggers / hook manager to handle events for the next spawn call —
@@ -3832,6 +3917,9 @@ class AgentService(
         // Multimodal-agent Phase 3 — clear hoisted AttachmentStore so the
         // next session constructs a fresh one against its own session dir.
         activeAttachmentStore = null
+        // Task 10 — clear the session debug dir reference so BrainFactory doesn't
+        // derive api-debug/ paths into a dead session dir on the next brain construction.
+        currentSessionDebugDir = null
         sessionRuntime.clear() // Drop per-conversation counters + token/cost running totals
         sessionDisposableHolder.resetSession()
     }

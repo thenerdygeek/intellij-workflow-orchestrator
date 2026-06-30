@@ -2,12 +2,17 @@ package com.workflow.orchestrator.agent.brain
 
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
+import com.workflow.orchestrator.agent.ai.AnthropicDirectBrain
+import com.workflow.orchestrator.agent.session.AttachmentStore
 import com.workflow.orchestrator.agent.settings.AgentSettings
+import com.workflow.orchestrator.agent.tool.SessionAttachmentAccess
+import com.workflow.orchestrator.core.ai.AnthropicModelCatalog
 import com.workflow.orchestrator.core.ai.LlmBrain
 import com.workflow.orchestrator.core.ai.LlmBrainFactory
 import com.workflow.orchestrator.core.ai.ModelCache
 import com.workflow.orchestrator.core.ai.OpenAiCompatBrain
 import com.workflow.orchestrator.core.ai.SourcegraphChatClient
+import com.workflow.orchestrator.core.ai.anthropic.AnthropicHttpClient
 import com.workflow.orchestrator.core.auth.CredentialStore
 import com.workflow.orchestrator.core.model.ServiceType
 import com.workflow.orchestrator.core.settings.ConnectionSettings
@@ -26,6 +31,19 @@ class BrainFactory(
     private val project: Project,
     private val toolNames: () -> Set<String>,
     private val paramNames: () -> Set<String>,
+    /**
+     * Provider for the session-scoped [SessionAttachmentAccess] (wraps the per-session
+     * [AttachmentStore]). Used by [AnthropicDirectBrain] for image hydration on the native
+     * Anthropic path. Returns null outside a live session or when Sourcegraph is the provider.
+     * [AgentService] wires this to `{ activeAttachmentStore?.let { SessionAttachmentAccess(it) } }`.
+     */
+    private val attachmentAccess: () -> SessionAttachmentAccess? = { null },
+    /**
+     * Provider for the raw session directory (e.g. `sessions/{sid}`). The factory uses this
+     * to derive the `api-debug/` sub-directory for [AnthropicHttpClient] debug dumps when
+     * [AgentSettings.State.writeApiDebugDumps] is true. Null outside a live session.
+     */
+    private val sessionDebugDir: () -> java.io.File? = { null },
 ) {
 
     private val log = Logger.getInstance(BrainFactory::class.java)
@@ -35,6 +53,61 @@ class BrainFactory(
      * settings (model, URL, token).
      */
     suspend fun create(modelOverride: String? = null): LlmBrain {
+        val agentSettings = AgentSettings.getInstance(project)
+
+        // ── Native Anthropic branch — evaluated FIRST, before the blank-Sourcegraph-URL guard ──
+        // This ensures the Anthropic path never requires a Sourcegraph URL to be configured.
+        // Model-override precedence (essential for sub-agent + recycle/escalation callers):
+        //   modelOverride ?: agentSettings.anthropicModel ?: AnthropicModelCatalog.defaultModel()
+        if (agentSettings.state.llmProvider == "anthropic") {
+            val modelId = modelOverride?.takeIf { it.isNotBlank() }
+                ?: agentSettings.state.anthropicModel?.takeIf { it.isNotBlank() }
+                ?: AnthropicModelCatalog.defaultModel()
+            val apiKey = CredentialStore().getToken(ServiceType.ANTHROPIC) ?: ""
+            val baseUrl = ConnectionSettings.getInstance().state.anthropicApiUrl
+            // Debug dumps gated on writeApiDebugDumps; placed in api-debug/ sub-dir so the
+            // dump layout mirrors the Sourcegraph path (sessionDir/api-debug/NNN.request.json).
+            val debugDir = sessionDebugDir()
+                ?.let { java.io.File(it, "api-debug") }
+                ?.takeIf { agentSettings.state.writeApiDebugDumps }
+            val http = AnthropicHttpClient(
+                baseUrl = baseUrl,
+                apiKey = apiKey,
+                debugDir = debugDir,
+            )
+            // Resolve the session attachment store. In production AgentService initialises
+            // activeAttachmentStore before createBrain() for the native path, so this lambda
+            // returns non-null. The temp-dir fallback is a safety net for tests that do not
+            // provide a store (image bytes will simply not resolve, which is acceptable for
+            // text-only test scenarios).
+            val access = attachmentAccess()
+                ?: run {
+                    log.debug(
+                        "[Agent][BrainFactory] No SessionAttachmentAccess in scope; " +
+                            "creating temporary store for native Anthropic brain (text-only safe)"
+                    )
+                    SessionAttachmentAccess(
+                        AttachmentStore(java.nio.file.Files.createTempDirectory("wf-anthropic-nostore-"))
+                    )
+                }
+            val allToolNames = toolNames()
+            val allParamNames = paramNames()
+            log.info(
+                "[Agent] Creating AnthropicDirectBrain: model=$modelId, baseUrl=$baseUrl " +
+                    "(tools=${allToolNames.size}, params=${allParamNames.size})"
+            )
+            return AnthropicDirectBrain(
+                modelId = modelId,
+                http = http,
+                attachmentAccess = access,
+                thinkingEnabled = { agentSettings.state.anthropicThinkingEnabled },
+                effort = { agentSettings.state.anthropicEffort ?: "high" },
+                toolNameSet = allToolNames,
+                paramNameSet = allParamNames,
+            )
+        }
+
+        // ── Sourcegraph path (existing) ──
         val connections = ConnectionSettings.getInstance()
         val sgUrl = connections.state.sourcegraphUrl.trimEnd('/')
         val credentialStore = CredentialStore()
