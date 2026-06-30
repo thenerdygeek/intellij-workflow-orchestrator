@@ -16,11 +16,14 @@ import com.workflow.orchestrator.core.ai.dto.StreamDelta
 import com.workflow.orchestrator.core.ai.dto.ToolDefinition
 import com.workflow.orchestrator.core.model.ApiResult
 import com.workflow.orchestrator.core.model.ErrorType
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonElement
 import java.util.Base64
+import java.util.concurrent.LinkedBlockingQueue
 
 /**
  * [LlmBrain] implementation that uses the native Anthropic Messages API stack:
@@ -39,21 +42,30 @@ import java.util.Base64
  * **chat() delegates to chatStream().** The transport is streaming-only; we don't
  * add a second non-streaming HTTP path.
  *
- * **onLine → Sequence bridge.** [AnthropicHttpTransport.postStream] pushes raw SSE
- * lines via a `(String) -> Unit` callback (push model). [AnthropicSseParser.parse]
- * consumes a `Sequence<String>` (pull model). Bridge: accumulate lines into a list
- * during `postStream`, then parse the list in one pass after the transport returns.
- * This is correct because:
- * - `postStream` is already suspend — callers get real network streaming.
- * - Tool-use XML always emits at `message_stop`, never mid-stream, so there is no
- *   latency difference between progressive-parse and post-parse for the dominant
- *   tool-use case.
- * - `emitText` inside `AnthropicSseParser.parse` is non-suspend, so the suspend
- *   [onChunk] callback must be called after parse returns, not inside the parser.
+ * **Progressive streaming via a producer/consumer bridge.** Two impedance mismatches
+ * are bridged so text reaches [onChunk] *as it streams*, not in one batch at the end:
+ * - [AnthropicHttpTransport.postStream] *pushes* raw SSE lines via a `(String) -> Unit`
+ *   callback, while [AnthropicSseParser.parse] *pulls* a `Sequence<String>`. A
+ *   [java.util.concurrent.LinkedBlockingQueue] bridges them: the transport `put`s each
+ *   line as it arrives and the parser's sequence `take`s the next line, blocking until
+ *   one is available — so `emitText` fires per line, concurrently with the transport,
+ *   instead of after the whole response is buffered.
+ * - `emitText` inside the parser is non-suspend, but [onChunk] is suspend. An UNLIMITED
+ *   [kotlinx.coroutines.channels.Channel] bridges them: `emitText` does a non-blocking
+ *   `trySend` (never fails on an unlimited buffer) and the suspend consumer drains the
+ *   channel, calling [onChunk] for each piece progressively.
  *
- * **Cancellation.** `postStream` runs inside a child [Job]; both [interruptStream]
- * and [cancelActiveRequest] cancel that job, which cancels the coroutine running the
- * transport (and thus aborts the in-flight OkHttp call via `invokeOnCompletion`).
+ * The transport and the parser run as two concurrent `Dispatchers.IO` coroutines (the
+ * parser blocks its carrier thread on `take()`, so the transport needs its own thread to
+ * feed the queue). The transport ALWAYS enqueues an end-of-stream sentinel in a `finally`
+ * — even when `postStream` returns an error or throws `CancellationException` on abort —
+ * so the parser's `take()` can never block forever and the consumer loop always ends.
+ *
+ * **Cancellation.** The producer coroutine is held in [activeJob]; both [interruptStream]
+ * and [cancelActiveRequest] cancel it. Cancellation cascades to the child transport
+ * coroutine, aborting the in-flight OkHttp call via `invokeOnCompletion`; the transport's
+ * `finally` then enqueues end-of-stream, the parser returns, the text channel is closed,
+ * and the consumer loop ends — no leak, no deadlock.
  *
  * Phase 4a Task 9.
  */
@@ -83,17 +95,20 @@ class AnthropicDirectBrain(
     /**
      * Streams the conversation to the Anthropic Messages API.
      *
-     * Build [AnthropicRequest] via [AnthropicRequestMapper], run
-     * [AnthropicHttpTransport.postStream] in a child [Job] (so cancellation works),
-     * accumulate raw SSE lines, parse them via [AnthropicSseParser], and invoke
-     * [onChunk] for each text/XML piece emitted by the parser.
+     * Builds the request via [AnthropicRequestMapper], then runs the transport and the SSE
+     * parser as two concurrent `Dispatchers.IO` coroutines bridged by a blocking line queue
+     * while a suspend consumer drains the parser's emitted text and invokes [onChunk]
+     * progressively (see the class-level KDoc for the full bridge design). The producer is
+     * stored in [activeJob] so [interruptStream] / [cancelActiveRequest] can abort it.
+     * Error precedence: transport error → parse (tool-use collision) error → success with
+     * the full accumulated assistant text.
      */
     override suspend fun chatStream(
         messages: List<ChatMessage>,
         tools: List<ToolDefinition>?,
         maxTokens: Int?,
         onChunk: suspend (StreamChunk) -> Unit,
-    ): ApiResult<ChatCompletionResponse> {
+    ): ApiResult<ChatCompletionResponse> = coroutineScope {
         val resolvedMaxTokens = maxTokens ?: AnthropicModelCatalog.maxOutput(modelId)
         val request = AnthropicRequestMapper.build(
             messages = messages,
@@ -105,64 +120,87 @@ class AnthropicDirectBrain(
             imageBytes = buildImageBytesLambda(),
         )
 
-        // Accumulate SSE lines while the transport streams them. Run inside a child
-        // Job so interruptStream/cancelActiveRequest can abort the in-flight call.
-        val lines = mutableListOf<String>()
+        // Bridge 1: transport's push onLine (IO thread) → blocking queue the parser pulls.
+        val lineQueue = LinkedBlockingQueue<LineMsg>()
+        // Bridge 2: parser's non-suspend emitText → UNLIMITED channel the suspend consumer drains.
+        val textChannel = Channel<String>(Channel.UNLIMITED)
+
         var transportResult: ApiResult<Unit> = ApiResult.Success(Unit)
+        var finishReason: String? = null
+        var parseError: IllegalStateException? = null
 
-        coroutineScope {
-            val job = launch {
-                transportResult = http.postStream(request) { line -> lines.add(line) }
+        // Producer: the transport feeds lineQueue while the parser drains it (emitText →
+        // textChannel). Both run on Dispatchers.IO because the parser blocks its carrier
+        // thread on take(), so the transport needs its own thread to keep feeding the queue.
+        val producer = launch(Dispatchers.IO) {
+            val transportJob = launch(Dispatchers.IO) {
+                try {
+                    transportResult = http.postStream(request) { line ->
+                        lineQueue.put(LineMsg.Line(line))
+                    }
+                } finally {
+                    // ALWAYS signal end-of-stream so the parser's take() unblocks even when
+                    // postStream returns an error or throws CancellationException on abort.
+                    lineQueue.put(LineMsg.EndOfStream)
+                }
             }
-            activeJob = job
-            job.join()
-        }
-
-        if (transportResult is ApiResult.Error) {
-            @Suppress("UNCHECKED_CAST")
-            return transportResult as ApiResult<ChatCompletionResponse>
-        }
-
-        // emitText inside AnthropicSseParser.parse is non-suspend, so collect
-        // pieces into a list, then call the suspend onChunk after parse returns.
-        val textPieces = mutableListOf<String>()
-        val parseResult = try {
-            AnthropicSseParser.parse(lines.asSequence()) { text ->
-                textPieces.add(text)
+            val lineSeq = generateSequence {
+                when (val msg = lineQueue.take()) {
+                    is LineMsg.Line -> msg.value
+                    LineMsg.EndOfStream -> null
+                }
             }
-        } catch (e: IllegalStateException) {
-            // Task 6 cross-task: tool_use collision guard in ToolUseXmlSerializer
-            return ApiResult.Error(
-                type = ErrorType.PARSE_ERROR,
-                message = "Tool-use collision during SSE parse: ${e.message}",
-                cause = e,
-            )
+            try {
+                finishReason = AnthropicSseParser.parse(lineSeq) { text ->
+                    textChannel.trySend(text)
+                }.finishReason
+            } catch (e: IllegalStateException) {
+                // Task 6 cross-task: tool_use collision guard in ToolUseXmlSerializer.
+                parseError = e
+            } finally {
+                textChannel.close()
+                transportJob.join()
+            }
         }
+        activeJob = producer
 
+        // Consumer: drain text progressively → onChunk for each piece as it streams in.
         val accumulated = StringBuilder()
-        for (piece in textPieces) {
-            accumulated.append(piece)
+        for (text in textChannel) {
+            accumulated.append(text)
             onChunk(
                 StreamChunk(
                     choices = listOf(
-                        StreamChoice(delta = StreamDelta(content = piece))
+                        StreamChoice(delta = StreamDelta(content = text))
                     )
                 )
             )
         }
+        producer.join()
 
-        return ApiResult.Success(
-            ChatCompletionResponse(
-                id = "anthropic-direct",
-                choices = listOf(
-                    Choice(
-                        index = 0,
-                        message = ChatMessage(role = "assistant", content = accumulated.toString()),
-                        finishReason = parseResult.finishReason,
-                    )
-                ),
+        when {
+            transportResult is ApiResult.Error -> {
+                @Suppress("UNCHECKED_CAST")
+                transportResult as ApiResult<ChatCompletionResponse>
+            }
+            parseError != null -> ApiResult.Error(
+                type = ErrorType.PARSE_ERROR,
+                message = "Tool-use collision during SSE parse: ${parseError?.message}",
+                cause = parseError,
             )
-        )
+            else -> ApiResult.Success(
+                ChatCompletionResponse(
+                    id = "anthropic-direct",
+                    choices = listOf(
+                        Choice(
+                            index = 0,
+                            message = ChatMessage(role = "assistant", content = accumulated.toString()),
+                            finishReason = finishReason,
+                        )
+                    ),
+                )
+            )
+        }
     }
 
     // ── LlmBrain: chat (delegates to chatStream) ───────────────────────────────
@@ -242,4 +280,15 @@ class AnthropicDirectBrain(
             else -> "application/octet-stream"
         }
     }
+}
+
+/**
+ * Producer→parser bridge message carried on the [LinkedBlockingQueue]: either a raw SSE
+ * [Line], or the [EndOfStream] sentinel that tells the parser's `generateSequence` to stop
+ * (`take()` returns it, the sequence yields `null`). The transport enqueues exactly one
+ * [EndOfStream] in a `finally`, so the parser always terminates — including on abort.
+ */
+private sealed interface LineMsg {
+    data class Line(val value: String) : LineMsg
+    object EndOfStream : LineMsg
 }
