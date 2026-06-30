@@ -1996,7 +1996,8 @@ class AgentController(
      * (guarantees state arrives even on slow machines).
      */
     private fun pushInitialState() {
-        val model = AgentSettings.getInstance(project).state.sourcegraphChatModel
+        val state = AgentSettings.getInstance(project).state
+        val model = if (state.llmProvider == "anthropic") state.anthropicModel else state.sourcegraphChatModel
         if (!model.isNullOrBlank()) {
             dashboard.setModelName(model)
         }
@@ -2015,6 +2016,13 @@ class AgentController(
      * Runs in background — failure is non-fatal.
      */
     private fun loadModelList(force: Boolean = false) {
+        // Native provider (Phase 4a): the picker is sourced from the static AnthropicModelCatalog,
+        // not from a GET /.api/llm/models call, and drives `anthropicModel` (NOT sourcegraphChatModel).
+        if (AgentSettings.getInstance(project).state.llmProvider == "anthropic") {
+            loadAnthropicModelList()
+            return
+        }
+
         val connections = com.workflow.orchestrator.core.settings.ConnectionSettings.getInstance()
         if (connections.state.sourcegraphUrl.isBlank()) return
 
@@ -2177,6 +2185,44 @@ class AgentController(
             }
             LOG.info("AgentController: loaded ${models.size} models for dropdown")
         }
+    }
+
+    /**
+     * Populate the in-chat model picker from the static [com.workflow.orchestrator.core.ai.AnthropicModelCatalog]
+     * when the native provider is selected (`llmProvider == "anthropic"`). No network call — the
+     * catalog is a compiled constant. Drives [com.workflow.orchestrator.agent.settings.AgentSettings.State.anthropicModel],
+     * never `sourcegraphChatModel`. Mirrors the Sourcegraph path's `updateModelList` JSON shape so the
+     * webview ModelPickerRow renders capacity + capability strips identically.
+     */
+    private fun loadAnthropicModelList() {
+        val settings = AgentSettings.getInstance(project)
+        val current = settings.state.anthropicModel
+            ?.takeIf { it.isNotBlank() }
+            ?: com.workflow.orchestrator.core.ai.AnthropicModelCatalog.defaultModel()
+        // Seed the saved selection if it was never set, so the bar shows a model immediately.
+        if (settings.state.anthropicModel.isNullOrBlank()) {
+            settings.state.anthropicModel = current
+        }
+
+        val jsonItems = com.workflow.orchestrator.core.ai.AnthropicModelCatalog.MODELS.map { entry ->
+            val id = entry.id.replace("\"", "\\\"")
+            val name = com.workflow.orchestrator.core.ai.dto.ModelInfo.formatModelName(entry.id)
+                .replace("\"", "\\\"")
+            val caps = buildList {
+                if (entry.supportsVision) add("\"vision\"")
+                add("\"tools\"")
+            }
+            val capsField = ""","capabilities":[${caps.joinToString(",")}]"""
+            val cwField = ""","contextWindow":{"maxInputTokens":${entry.contextWindow},"maxOutputTokens":${entry.maxOutput}}"""
+            """{"id":"$id","name":"$name","provider":"Anthropic","thinking":false,"vision":${entry.supportsVision}$cwField$capsField}"""
+        }
+        val modelsJson = jsonItems.joinToString(",", "[", "]")
+
+        com.intellij.openapi.application.invokeLater {
+            dashboard.updateModelList(modelsJson)
+            dashboard.setModelName(com.workflow.orchestrator.core.ai.dto.ModelInfo.formatModelName(current))
+        }
+        LOG.info("AgentController: loaded ${jsonItems.size} native Anthropic models for dropdown")
     }
 
     /**
@@ -5094,10 +5140,12 @@ class AgentController(
      * This is the saved/selected model — the one the user is looking at in the picker.
      * Falls back to the running brain model when the selection is blank (auto-pick path).
      */
-    private fun selectedModelId(): String? =
-        AgentSettings.getInstance(project).state.sourcegraphChatModel
-            ?.takeIf { it.isNotBlank() }
-            ?: service.getCurrentBrainModelId()
+    private fun selectedModelId(): String? {
+        val state = AgentSettings.getInstance(project).state
+        // Native provider keys DISPLAY on anthropicModel; Sourcegraph keys on sourcegraphChatModel.
+        val saved = if (state.llmProvider == "anthropic") state.anthropicModel else state.sourcegraphChatModel
+        return saved?.takeIf { it.isNotBlank() } ?: service.getCurrentBrainModelId()
+    }
 
     /**
      * DISPLAY max-input-tokens for the bar + TopBar — the override-aware window keyed on the
@@ -5122,6 +5170,14 @@ class AgentController(
     private fun changeModel(model: String) {
         LOG.info("AgentController.changeModel: $model")
         val settings = AgentSettings.getInstance(project)
+        // Native provider: the picker drives anthropicModel (NOT sourcegraphChatModel).
+        if (settings.state.llmProvider == "anthropic") {
+            settings.state.anthropicModel = model
+            dashboard.setModelName(com.workflow.orchestrator.core.ai.dto.ModelInfo.formatModelName(model))
+            service.requestModelChange(model)
+            dashboard.setModelFallbackState(false, null)
+            return
+        }
         settings.state.sourcegraphChatModel = model
         // Resolve formatted display name from cache, fall back to formatModelName on the raw ID
         val cached = com.workflow.orchestrator.core.ai.ModelCache.getCached()

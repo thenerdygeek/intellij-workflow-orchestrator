@@ -1,6 +1,7 @@
 package com.workflow.orchestrator.agent.settings
 
 import com.intellij.icons.AllIcons
+import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.invokeLater
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.options.SearchableConfigurable
@@ -13,6 +14,7 @@ import com.intellij.ui.dsl.builder.*
 import com.intellij.util.ui.JBUI
 import com.workflow.orchestrator.agent.api.SourcegraphChatClient
 import com.workflow.orchestrator.agent.api.dto.ModelInfo
+import com.workflow.orchestrator.core.ai.AnthropicModelCatalog
 import com.workflow.orchestrator.core.ai.ModelCache
 import com.workflow.orchestrator.core.auth.CredentialStore
 import com.workflow.orchestrator.core.http.AuthInterceptor
@@ -21,8 +23,8 @@ import com.workflow.orchestrator.core.http.HttpClientFactory
 import com.workflow.orchestrator.core.model.ApiResult
 import com.workflow.orchestrator.core.model.ServiceType
 import com.workflow.orchestrator.core.settings.ConnectionSettings
-import com.workflow.orchestrator.core.ui.bindBoundedWidth
 import com.workflow.orchestrator.core.settings.ConnectionStatusBanner
+import com.workflow.orchestrator.core.ui.bindBoundedWidth
 import kotlinx.coroutines.*
 import java.awt.Component
 import javax.swing.*
@@ -45,6 +47,9 @@ class AgentParentConfigurable(
 
     companion object {
         private val LOG = Logger.getInstance(AgentParentConfigurable::class.java)
+
+        /** Width (in columns) of the Anthropic API-key / base-URL text fields. */
+        private const val ANTHROPIC_FIELD_COLUMNS = 40
     }
 
     private val settings = AgentSettings.getInstance(project)
@@ -56,6 +61,22 @@ class AgentParentConfigurable(
     private var sourcegraphChatModel = settings.state.sourcegraphChatModel ?: ""
     private var maxOutputTokens = settings.state.maxOutputTokens
     private var networkErrorStrategy = settings.state.networkErrorStrategy ?: "none"
+
+    // ── Native LLM provider (Anthropic-direct, Phase 4a) ──────────────────────
+    // Mutable copies for the UI — written to settings.state / ConnectionSettings /
+    // CredentialStore only on apply().
+    private var llmProvider = settings.state.llmProvider ?: "sourcegraph"
+    private var anthropicModel = settings.state.anthropicModel ?: AnthropicModelCatalog.defaultModel()
+    private var anthropicEffort = settings.state.anthropicEffort ?: "high"
+    private var anthropicThinkingEnabled = settings.state.anthropicThinkingEnabled
+    private var anthropicBaseUrl = ConnectionSettings.getInstance().state.anthropicApiUrl
+
+    // API key — NEVER persisted to XML/state. Captured into [pendingAnthropicApiKey] on
+    // change, written to the CredentialStore (PasswordSafe) only on apply(). The store read
+    // that pre-fills the field runs OFF the EDT (PasswordSafe.get() is a SlowOperations hazard).
+    private var anthropicApiKeyField: javax.swing.JPasswordField? = null
+    private var pendingAnthropicApiKey: String? = null
+    private var suppressAnthropicKeyChange = false
 
     // Model dropdown state
     private var modelComboBox: JComboBox<ModelItem>? = null
@@ -142,6 +163,57 @@ class AgentParentConfigurable(
                 }
             }.enabledIf(agentEnabledCell.selected)
 
+            group("Native LLM Provider") {
+                row("LLM provider:") {
+                    comboBox(listOf("Sourcegraph", "Anthropic"))
+                        .bindItem(
+                            { if (llmProvider == "anthropic") "Anthropic" else "Sourcegraph" },
+                            { llmProvider = if (it == "Anthropic") "anthropic" else "sourcegraph" }
+                        )
+                        .comment(
+                            "Sourcegraph routes through your enterprise gateway. " +
+                                "Anthropic calls api.anthropic.com directly with your own API key."
+                        )
+                }
+                row("Anthropic API key:") {
+                    passwordField()
+                        .columns(ANTHROPIC_FIELD_COLUMNS)
+                        .applyToComponent { anthropicApiKeyField = this }
+                        .onChanged { field ->
+                            if (!suppressAnthropicKeyChange) {
+                                pendingAnthropicApiKey = String(field.password)
+                            }
+                        }
+                        .comment("Stored securely in the IDE password vault — never written to settings XML")
+                }
+                row("Anthropic base URL:") {
+                    textField()
+                        .columns(ANTHROPIC_FIELD_COLUMNS)
+                        .bindText({ anthropicBaseUrl }, { anthropicBaseUrl = it })
+                        .comment("Default: https://api.anthropic.com")
+                }
+                row("Anthropic model:") {
+                    comboBox(AnthropicModelCatalog.MODELS.map { it.id })
+                        .bindItem(
+                            { anthropicModel },
+                            { anthropicModel = it ?: AnthropicModelCatalog.defaultModel() }
+                        )
+                }
+                row("Reasoning effort:") {
+                    comboBox(listOf("low", "medium", "high", "xhigh", "max"))
+                        .bindItem(
+                            { anthropicEffort },
+                            { anthropicEffort = it ?: "high" }
+                        )
+                        .comment("Higher effort spends more thinking tokens per turn")
+                }
+                row {
+                    checkBox("Enable extended thinking")
+                        .bindSelected(::anthropicThinkingEnabled)
+                        .comment("Lets the model reason in a hidden scratchpad before answering")
+                }
+            }.enabledIf(agentEnabledCell.selected)
+
             group("Behavior") {
                 row {
                     label("On network error retry exhaustion:")
@@ -170,7 +242,29 @@ class AgentParentConfigurable(
             }.enabledIf(agentEnabledCell.selected)
         }
         dialogPanel = innerPanel
+        populateAnthropicApiKeyField()
         return innerPanel
+    }
+
+    /**
+     * Pre-fill the Anthropic API-key field from the CredentialStore (PasswordSafe).
+     * The read runs OFF the EDT — PasswordSafe.get() can block for 1-2s on first access and
+     * trips a SlowOperations assertion on the EDT. The programmatic field set is bracketed by
+     * [suppressAnthropicKeyChange] so it does not register as a pending (modified) edit.
+     */
+    private fun populateAnthropicApiKeyField() {
+        val field = anthropicApiKeyField ?: return
+        ApplicationManager.getApplication().executeOnPooledThread {
+            val existing = CredentialStore().getToken(ServiceType.ANTHROPIC) ?: ""
+            invokeLater {
+                suppressAnthropicKeyChange = true
+                try {
+                    field.text = existing
+                } finally {
+                    suppressAnthropicKeyChange = false
+                }
+            }
+        }
     }
 
     /**
@@ -318,8 +412,9 @@ class AgentParentConfigurable(
     }
 
     override fun isModified(): Boolean {
-        return dialogPanel?.isModified() ?: false ||
-            sourcegraphChatModel != (settings.state.sourcegraphChatModel ?: "")
+        return (dialogPanel?.isModified() ?: false) ||
+            sourcegraphChatModel != (settings.state.sourcegraphChatModel ?: "") ||
+            pendingAnthropicApiKey != null
     }
 
     override fun apply() {
@@ -340,6 +435,27 @@ class AgentParentConfigurable(
         settings.state.sourcegraphChatModel = sourcegraphChatModel
         settings.state.maxOutputTokens = maxOutputTokens
         settings.state.networkErrorStrategy = networkErrorStrategy
+
+        // Native LLM provider (Anthropic-direct). The provider/model/effort/thinking writes go
+        // through the pure [applyAnthropicProviderSettings] seam (unit-tested headlessly). The
+        // base-URL (ConnectionSettings) and API-key (CredentialStore) writes are platform-coupled
+        // and stay inline.
+        applyAnthropicProviderSettings(
+            settings.state,
+            AnthropicProviderSettingsSnapshot(
+                llmProvider = llmProvider,
+                anthropicModel = anthropicModel,
+                anthropicEffort = anthropicEffort,
+                anthropicThinkingEnabled = anthropicThinkingEnabled,
+            )
+        )
+        ConnectionSettings.getInstance().state.anthropicApiUrl = anthropicBaseUrl.trim()
+        pendingAnthropicApiKey?.let { key ->
+            if (key.isNotBlank()) {
+                CredentialStore().storeToken(ServiceType.ANTHROPIC, key)
+            }
+        }
+        pendingAnthropicApiKey = null
     }
 
     override fun reset() {
@@ -347,6 +463,15 @@ class AgentParentConfigurable(
         sourcegraphChatModel = settings.state.sourcegraphChatModel ?: ""
         maxOutputTokens = settings.state.maxOutputTokens
         networkErrorStrategy = settings.state.networkErrorStrategy ?: "none"
+
+        // Native LLM provider fields
+        llmProvider = settings.state.llmProvider ?: "sourcegraph"
+        anthropicModel = settings.state.anthropicModel ?: AnthropicModelCatalog.defaultModel()
+        anthropicEffort = settings.state.anthropicEffort ?: "high"
+        anthropicThinkingEnabled = settings.state.anthropicThinkingEnabled
+        anthropicBaseUrl = ConnectionSettings.getInstance().state.anthropicApiUrl
+        pendingAnthropicApiKey = null
+
         dialogPanel?.reset()
 
         // Reset combo to current value
@@ -356,6 +481,9 @@ class AgentParentConfigurable(
                 isManualEntry = true
             )
         }
+
+        // Re-populate the API-key field from the credential store (off-EDT).
+        populateAnthropicApiKeyField()
     }
 
     override fun disposeUIResources() {
@@ -363,6 +491,7 @@ class AgentParentConfigurable(
         modelComboBox = null
         modelStatusLabel = null
         loadModelsButton = null
+        anthropicApiKeyField = null
         loadScope.cancel()
     }
 
@@ -442,4 +571,34 @@ class AgentParentConfigurable(
             return label
         }
     }
+}
+
+/**
+ * Immutable snapshot of the native (Anthropic-direct) provider settings captured from
+ * [AgentParentConfigurable]'s backing fields at apply() time.
+ *
+ * Extracted as a pure seam so the apply-time persistence is unit-testable headlessly — no
+ * IntelliJ platform Project/Application is required (the platform-coupled writes — base URL on
+ * `ConnectionSettings`, API key on the `CredentialStore`/PasswordSafe — stay inline in
+ * `AgentParentConfigurable.apply()`). Pinned by `AnthropicConfigurableApplyTest`.
+ */
+internal data class AnthropicProviderSettingsSnapshot(
+    val llmProvider: String,
+    val anthropicModel: String,
+    val anthropicEffort: String,
+    val anthropicThinkingEnabled: Boolean,
+)
+
+/**
+ * Writes [snapshot] into [state]. Pure — no platform dependencies, so it can be exercised by a
+ * plain JVM unit test against a fresh `AgentSettings.State()`.
+ */
+internal fun applyAnthropicProviderSettings(
+    state: AgentSettings.State,
+    snapshot: AnthropicProviderSettingsSnapshot,
+) {
+    state.llmProvider = snapshot.llmProvider
+    state.anthropicModel = snapshot.anthropicModel
+    state.anthropicEffort = snapshot.anthropicEffort
+    state.anthropicThinkingEnabled = snapshot.anthropicThinkingEnabled
 }
