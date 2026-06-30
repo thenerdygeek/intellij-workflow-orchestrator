@@ -2414,6 +2414,15 @@ class AgentService(
                     // presents tools the same way the orchestrator does (native → presentTools=null).
                     spawnAgentTool.toolProtocol = activeToolProtocol
                     spawnAgentTool.maxOutputTokens = agentSettings.state.maxOutputTokens
+                    // Phase 4a Task 12 (C2) fix — push the bare model id for the native path so
+                    // SpawnAgentTool never calls AgentSettings.getInstance(project) on its hot path
+                    // (that call crashes the mock-Project used by SpawnAgentToolTest).
+                    spawnAgentTool.nativeSubagentDefaultModel =
+                        if (agentSettings.state.llmProvider == "anthropic") {
+                            com.workflow.orchestrator.core.ai.AnthropicModelCatalog.defaultSubagentModel()
+                        } else {
+                            null
+                        }
                     // Gated: null when api-debug dumps are off, so sub-agents write nothing to disk.
                     spawnAgentTool.sessionDebugDir = apiDebugDir
                     spawnAgentTool.toolExecutionMode = agentSettings.state.toolExecutionMode ?: "accumulate"

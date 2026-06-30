@@ -60,6 +60,14 @@ class SpawnAgentTool(
      */
     var toolProtocol: com.workflow.orchestrator.core.ai.protocol.ToolProtocol =
         com.workflow.orchestrator.core.ai.protocol.XmlToolProtocol(),
+    /**
+     * Phase 4a Task 12 (C2) fix — the native-provider sub-agent default model id (bare), pushed per
+     * task by [com.workflow.orchestrator.agent.AgentService]. Non-null on the native Anthropic path;
+     * null on the Sourcegraph path (falls back to [ModelCache.pickSonnetNonThinking]).
+     * SpawnAgentTool deliberately does NOT read AgentSettings here — that call crashes the
+     * bare-mock-Project used by SpawnAgentToolTest (the same decoupling guarantee as [toolProtocol]).
+     */
+    var nativeSubagentDefaultModel: String? = null,
     var onSubagentProgress: (suspend (String, SubagentProgressUpdate) -> Unit)? = null,
     /**
      * Parent-session approval gate. Forwarded to every [SubagentRunner] so write tools
@@ -223,7 +231,7 @@ Parallel fan-out (read-only agents like "explorer" only): pass up to 5 prompts (
             ),
             "model" to ParameterProperty(
                 type = "string",
-                description = "Optional model ID override for this subagent. For the Sourcegraph provider use the full ref form (e.g. 'anthropic::2024-10-22::claude-3-5-sonnet-latest'); for the native Anthropic provider use a bare model ID (e.g. 'claude-sonnet-4-6'). Overrides the agent config's model and the default auto-selected model. Use when a specific model capability is required."
+                description = "Optional model ID override for this subagent. Anthropic provider: a bare model id (e.g. 'claude-sonnet-4-6'). Sourcegraph provider: the full ref form (e.g. 'anthropic::2024-10-22::claude-3-5-sonnet-latest'). Overrides the agent config's model and the auto-selected default."
             ),
         ),
         required = listOf("description", "prompt")
@@ -329,10 +337,15 @@ Parallel fan-out (read-only agents like "explorer" only): pass up to 5 prompts (
                         example("security-auditor")
                     }
                     optional("model", "string") {
-                        llmSeesIt("Optional model ID override for this subagent (e.g. 'anthropic::2024-10-22::claude-3-5-sonnet-latest'). Overrides the agent config's model and the default auto-selected model. Use when a specific model capability is required.")
+                        llmSeesIt(
+                            "Optional model ID override for this subagent. Anthropic provider: a bare model id (e.g. 'claude-sonnet-4-6'). Sourcegraph provider: the full ref form (e.g. 'anthropic::2024-10-22::claude-3-5-sonnet-latest'). Overrides the agent config's model and the auto-selected default."
+                        )
                         humanReadable("Force a specific LLM for this sub-agent — overrides the persona's `model:` frontmatter and the global Sonnet default.")
                         whenPresent("Passed to `brainProvider(modelOverride)`; the sub-agent's brain reports this as `brain.modelId` and the worker card shows it.")
-                        whenAbsent("Falls back through: persona's `config.modelId` → `ModelCache.pickSonnetNonThinking()` → orchestrator's auto-selected model. Sub-agent default tier is Sonnet non-thinking, NOT the orchestrator's tier.")
+                        whenAbsent(
+                            "Falls back through: persona's `config.modelId` → `nativeSubagentDefaultModel` (pushed by AgentService for the Anthropic path) → `ModelCache.pickSonnetNonThinking()` → orchestrator's auto-selected model. Sub-agent default tier is Sonnet non-thinking, NOT the orchestrator's tier."
+                        )
+                        example("claude-sonnet-4-6")
                         example("anthropic::2024-10-22::claude-3-5-sonnet-latest")
                     }
                 }
@@ -501,7 +514,9 @@ Parallel fan-out (read-only agents like "explorer" only): pass up to 5 prompts (
                         example("general-purpose")
                     }
                     optional("model", "string") {
-                        llmSeesIt("Optional model ID override for this subagent (e.g. 'anthropic::2024-10-22::claude-3-5-sonnet-latest'). Overrides the agent config's model and the default auto-selected model. Use when a specific model capability is required.")
+                        llmSeesIt(
+                            "Optional model ID override for this subagent. Anthropic provider: a bare model id (e.g. 'claude-sonnet-4-6'). Sourcegraph provider: the full ref form (e.g. 'anthropic::2024-10-22::claude-3-5-sonnet-latest'). Overrides the agent config's model and the auto-selected default."
+                        )
                         humanReadable("Same as single mode — overrides every parallel worker's model.")
                         whenPresent("All N parallel workers use this model.")
                         whenAbsent("All workers use the persona/Sonnet-default fallback chain.")
@@ -700,17 +715,13 @@ Parallel fan-out (read-only agents like "explorer" only): pass up to 5 prompts (
 
         // Effective model: explicit param > YAML frontmatter > Sonnet non-thinking (sub-agent default tier)
         // > orchestrator's auto-selected model (when no Sonnet is available on the instance).
-        // C2: native Anthropic path uses a bare model id from AnthropicModelCatalog; the Sourcegraph
-        // path resolves via ModelCache which returns a full "provider::version::id" ref that 400s on
-        // api.anthropic.com.
-        val subagentDefaultModel = if (
-            com.workflow.orchestrator.agent.settings.AgentSettings.getInstance(project)
-                .state.llmProvider == "anthropic"
-        ) {
-            com.workflow.orchestrator.core.ai.AnthropicModelCatalog.defaultSubagentModel()
-        } else {
-            ModelCache.pickSonnetNonThinking(ModelCache.getCached())?.id
-        }
+        // C2: native Anthropic path uses a bare model id from AnthropicModelCatalog (pushed by
+        // AgentService via nativeSubagentDefaultModel); the Sourcegraph path resolves via ModelCache
+        // which returns a full "provider::version::id" ref that 400s on api.anthropic.com.
+        // SpawnAgentTool deliberately does NOT call AgentSettings.getInstance(project) here —
+        // that crashes the bare-mock-Project used by SpawnAgentToolTest (same rule as toolProtocol).
+        val subagentDefaultModel = nativeSubagentDefaultModel
+            ?: ModelCache.pickSonnetNonThinking(ModelCache.getCached())?.id
         val effectiveModelOverride = modelOverride ?: config.modelId ?: subagentDefaultModel
 
         return if (promptPairs.size == 1) {
