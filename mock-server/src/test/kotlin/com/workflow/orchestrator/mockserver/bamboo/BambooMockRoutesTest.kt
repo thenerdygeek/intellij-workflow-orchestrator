@@ -78,6 +78,76 @@ class BambooMockRoutesTest {
     }
 
     @Test
+    fun `GET project lists projects with key and name`() = testApplication {
+        setupBamboo()
+        val response = client.get("/rest/api/latest/project?max-results=100&start-index=0")
+        assertEquals(HttpStatusCode.OK, response.status)
+        val body = Json.parseToJsonElement(response.bodyAsText()).jsonObject
+        val projects = body["projects"]?.jsonObject?.get("project")?.jsonArray
+        assertNotNull(projects)
+        assertTrue(projects!!.isNotEmpty(), "Project list must be non-empty for the picker")
+        val proj = projects[0].jsonObject
+        assertEquals("PROJ", proj["key"]?.jsonPrimitive?.content)
+        assertNotNull(proj["name"]?.jsonPrimitive?.content)
+    }
+
+    @Test
+    fun `GET project past end returns empty page (pagination terminates)`() = testApplication {
+        setupBamboo()
+        val response = client.get("/rest/api/latest/project?max-results=100&start-index=100")
+        assertEquals(HttpStatusCode.OK, response.status)
+        val body = Json.parseToJsonElement(response.bodyAsText()).jsonObject
+        val projects = body["projects"]?.jsonObject?.get("project")?.jsonArray
+        assertEquals(0, projects?.size)
+    }
+
+    @Test
+    fun `GET project detail resolves the project's plans`() = testApplication {
+        setupBamboo()
+        val response = client.get("/rest/api/latest/project/PROJ?expand=plans.plan")
+        assertEquals(HttpStatusCode.OK, response.status)
+        val body = Json.parseToJsonElement(response.bodyAsText()).jsonObject
+        val plans = body["plans"]?.jsonObject?.get("plan")?.jsonArray
+        assertNotNull(plans)
+        assertEquals(3, plans!!.size, "PROJ owns the 3 default plans")
+        val keys = plans.map { it.jsonObject["key"]?.jsonPrimitive?.content }
+        assertTrue(keys.contains("PROJ-BUILD"))
+    }
+
+    @Test
+    fun `GET project detail for unknown project returns 404`() = testApplication {
+        setupBamboo()
+        val response = client.get("/rest/api/latest/project/NOPE?expand=plans.plan")
+        assertEquals(HttpStatusCode.NotFound, response.status)
+    }
+
+    @Test
+    fun `project to plan to stages chain resolves for picker and ManualStageDialog`() = testApplication {
+        setupBamboo()
+        // 1. Project list resolves a project key.
+        val projects = Json.parseToJsonElement(
+            client.get("/rest/api/latest/project").bodyAsText()
+        ).jsonObject["projects"]?.jsonObject?.get("project")?.jsonArray
+        val projectKey = projects!![0].jsonObject["key"]!!.jsonPrimitive.content
+
+        // 2. Project detail resolves a plan key.
+        val plans = Json.parseToJsonElement(
+            client.get("/rest/api/latest/project/$projectKey?expand=plans.plan").bodyAsText()
+        ).jsonObject["plans"]?.jsonObject?.get("plan")?.jsonArray
+        val planKey = plans!!.first { it.jsonObject["key"]?.jsonPrimitive?.content == "PROJ-BUILD" }
+            .jsonObject["key"]!!.jsonPrimitive.content
+
+        // 3. Latest result for that plan exposes stages (drives ManualStageDialog's checkboxes).
+        val result = Json.parseToJsonElement(
+            client.get("/rest/api/latest/result/$planKey/latest?expand=stages.stage.results.result").bodyAsText()
+        ).jsonObject
+        val stages = result["stages"]?.jsonObject?.get("stage")?.jsonArray
+        assertNotNull(stages, "Plan's latest result must expose stages for ManualStageDialog")
+        assertTrue(stages!!.isNotEmpty())
+        assertNotNull(stages[0].jsonObject["name"]?.jsonPrimitive?.content)
+    }
+
+    @Test
     fun `GET search plans filters by search term`() = testApplication {
         setupBamboo()
         val response = client.get("/rest/api/latest/search/plans?searchTerm=Sonar")

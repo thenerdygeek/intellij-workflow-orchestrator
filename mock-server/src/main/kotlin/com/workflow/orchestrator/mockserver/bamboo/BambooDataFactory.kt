@@ -6,6 +6,13 @@ object BambooDataFactory {
 
     fun createDefaultState(): BambooState {
         val state = BambooState()
+        state.projects = mutableListOf(
+            BambooProject(
+                key = "PROJ",
+                name = "Mock Project",
+                description = "Primary mock Bamboo project — owns the build, test and sonar plans",
+            ),
+        )
         state.plans = mutableListOf(
             BambooPlan(
                 key = "PROJ-BUILD",
@@ -84,6 +91,9 @@ object BambooDataFactory {
 
     fun createHappyPathState(): BambooState {
         val state = BambooState()
+        state.projects = mutableListOf(
+            BambooProject(key = "PROJ", name = "Mock Project"),
+        )
         state.plans = mutableListOf(
             BambooPlan("PROJ-BUILD", "Build", "Project - Artifact Build"),
         )

@@ -25,6 +25,69 @@ fun Route.bambooRoutes(stateProvider: () -> BambooState) {
         )
     }
 
+    // GET /rest/api/latest/project?max-results=100&start-index={start}
+    // Project listing for the Automation "Add suite by browsing Bamboo projects" picker.
+    // Plugin parses BambooProjectListResponse: { "projects": { "project": [ {key, name, description?} ] } }
+    // Pagination terminates on the client when a page returns fewer than max-results items.
+    get("/rest/api/latest/project") {
+        val state = stateProvider()
+        val startIndex = call.request.queryParameters["start-index"]?.toIntOrNull() ?: 0
+        val maxResults = call.request.queryParameters["max-results"]?.toIntOrNull() ?: 100
+        val all = state.projects
+        val page = if (startIndex >= all.size) emptyList()
+        else all.subList(startIndex, minOf(startIndex + maxResults, all.size))
+        call.respondText(
+            buildJsonObject {
+                putJsonObject("projects") {
+                    put("size", all.size)
+                    put("max-result", page.size)
+                    put("start-index", startIndex)
+                    putJsonArray("project") {
+                        page.forEach { proj ->
+                            addJsonObject {
+                                put("key", proj.key)
+                                put("name", proj.name)
+                                proj.description?.let { put("description", it) }
+                            }
+                        }
+                    }
+                }
+            }.toString(),
+            ContentType.Application.Json
+        )
+    }
+
+    // GET /rest/api/latest/project/{projectKey}?expand=plans.plan
+    // Per-project plan list for the picker's "Load Plans" step.
+    // Plugin parses BambooProjectDetailResponse: { "plans": { "plan": [ {key, name, shortName, ...} ] } }
+    get("/rest/api/latest/project/{projectKey}") {
+        val state = stateProvider()
+        val projectKey = call.parameters["projectKey"] ?: ""
+        if (state.projects.none { it.key == projectKey }) {
+            call.respond(HttpStatusCode.NotFound)
+            return@get
+        }
+        val plans = state.plansForProject(projectKey)
+        call.respondText(
+            buildJsonObject {
+                putJsonObject("plans") {
+                    put("size", plans.size)
+                    putJsonArray("plan") {
+                        plans.forEach { plan ->
+                            addJsonObject {
+                                put("key", plan.key)
+                                put("shortName", plan.shortName)
+                                put("name", plan.name)
+                                put("projectKey", projectKey)
+                            }
+                        }
+                    }
+                }
+            }.toString(),
+            ContentType.Application.Json
+        )
+    }
+
     // GET /rest/api/latest/plan
     get("/rest/api/latest/plan") {
         val state = stateProvider()

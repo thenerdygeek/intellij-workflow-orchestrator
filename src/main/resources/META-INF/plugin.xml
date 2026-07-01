@@ -309,14 +309,11 @@
         <externalAnnotator language="kotlin"
             implementationClass="com.workflow.orchestrator.sonar.ui.SonarIssueAnnotator"/>
 
-        <!-- Sonar Fix Intention Action (Alt+Enter) — language-filtered to Java/Kotlin only -->
+        <!-- Sonar Fix Intention Action (Alt+Enter). Single registration: registering the same
+             class twice (one per language) trips the platform's duplicate-intention guard
+             (IllegalStateException "N intention duplicates found"). isAvailable() already gates
+             on a Sonar issue at the caret, and Sonar issues only map to Java/Kotlin files. -->
         <intentionAction>
-            <language>JAVA</language>
-            <className>com.workflow.orchestrator.sonar.editor.SonarFixIntentionAction</className>
-            <category>Workflow Orchestrator</category>
-        </intentionAction>
-        <intentionAction>
-            <language>kotlin</language>
             <className>com.workflow.orchestrator.sonar.editor.SonarFixIntentionAction</className>
             <category>Workflow Orchestrator</category>
         </intentionAction>

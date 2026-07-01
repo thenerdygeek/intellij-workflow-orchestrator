@@ -6,6 +6,13 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 
 @Serializable
+data class BambooProject(
+    val key: String,
+    val name: String,
+    val description: String? = null,
+)
+
+@Serializable
 data class BambooPlan(
     val key: String,
     val shortName: String,
@@ -41,10 +48,19 @@ data class BambooStage(
 
 class BambooState {
     var currentUser = "mock.user"
+    var projects: MutableList<BambooProject> = mutableListOf()
     var plans: MutableList<BambooPlan> = mutableListOf()
     var builds: ConcurrentHashMap<String, BambooBuildResult> = ConcurrentHashMap()
     private val buildCounter = AtomicInteger(100)
     private val progressionScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
+    /**
+     * Plans belonging to a Bamboo project. Real Bamboo plan keys are `{PROJECTKEY}-{PLANKEY}`
+     * (e.g. plan `PROJ-BUILD` lives in project `PROJ`), so we derive the membership from the
+     * existing plan list by key prefix — no separate plan-to-project mapping to keep in sync.
+     */
+    fun plansForProject(projectKey: String): List<BambooPlan> =
+        plans.filter { it.key.startsWith("$projectKey-") }
 
     fun triggerBuild(planKey: String, variables: Map<String, String> = emptyMap()): BambooBuildResult {
         val buildNumber = buildCounter.incrementAndGet()
