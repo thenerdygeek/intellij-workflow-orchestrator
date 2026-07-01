@@ -1,0 +1,3 @@
+/Users/subhankarhalder/.claude/projects/-Users-subhankarhalder-Desktop-Programs-scripts-IntelijPlugin/memory
+repo abs path (this machine): /Users/subhankarhalder/Desktop/Programs/scripts/IntelijPlugin
+claude project dir name: -Users-subhankarhalder-Desktop-Programs-scripts-IntelijPlugin
